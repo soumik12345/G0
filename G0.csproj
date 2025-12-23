@@ -17,4 +17,12 @@
     <!-- HTML Parsing for documentation indexing -->
     <PackageReference Include="HtmlAgilityPack" Version="1.11.72" />
   </ItemGroup>
+
+  <!-- Ripgrep binaries for FileSearchTool -->
+  <ItemGroup>
+    <Content Include="addons\g0\Binaries\rg.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('addons\g0\Binaries\rg.exe')" />
+    <Content Include="addons\g0\Binaries\rg_macos_arm64" CopyToOutputDirectory="PreserveNewest" Condition="Exists('addons\g0\Binaries\rg_macos_arm64')" />
+    <Content Include="addons\g0\Binaries\rg_macos_x64" CopyToOutputDirectory="PreserveNewest" Condition="Exists('addons\g0\Binaries\rg_macos_x64')" />
+    <Content Include="addons\g0\Binaries\rg_linux" CopyToOutputDirectory="PreserveNewest" Condition="Exists('addons\g0\Binaries\rg_linux')" />
+  </ItemGroup>
 </Project>

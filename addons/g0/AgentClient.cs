@@ -107,6 +107,12 @@ namespace G0
                         _tools.Add(tool);
                     }
 
+                    // Add File Search tool for searching files using ripgrep
+                    foreach (AITool tool in FileSearchTool.CreateAIFunctions(projectRoot))
+                    {
+                        _tools.Add(tool);
+                    }
+
                     if (_tools.Count > 0)
                     {
                         GD.Print($"G0: Agent configured with {_tools.Count} tools");
