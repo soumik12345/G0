@@ -22,6 +22,7 @@ namespace G0
     /// </summary>
     public partial class AgentClient : Node
     {
+        // Existing signals for backward compatibility
         [Signal]
         public delegate void ChunkReceivedEventHandler(string chunk);
 
@@ -34,11 +35,27 @@ namespace G0
         [Signal]
         public delegate void ToolCalledEventHandler(string toolName, string arguments);
 
+        // New signals for intermediate agentic step streaming
+        [Signal]
+        public delegate void AgentStepStartedEventHandler(int iteration, int maxIterations);
+
+        [Signal]
+        public delegate void ReasoningChunkReceivedEventHandler(string chunk, int iteration);
+
+        [Signal]
+        public delegate void ToolCallStartedEventHandler(string toolName, string arguments, int iteration);
+
+        [Signal]
+        public delegate void ToolCallCompletedEventHandler(string toolName, string result, int iteration);
+
         private Models.G0Settings _settings;
         private IChatClient _chatClient;
         private List<AITool> _tools;
         private StringBuilder _currentResponse;
+        private StringBuilder _currentIterationReasoning;
         private bool _isStreaming;
+        private int _currentIteration;
+        private const int MaxToolIterations = 5;
         private CancellationTokenSource _cancellationTokenSource;
         private DocumentationIndex _documentationIndex;
 
@@ -47,6 +64,7 @@ namespace G0
         public override void _Ready()
         {
             _currentResponse = new StringBuilder();
+            _currentIterationReasoning = new StringBuilder();
             _tools = new List<AITool>();
         }
 
@@ -231,22 +249,41 @@ namespace G0
 
                 // Create chat options with tools if available
                 var options = new ChatOptions();
-                if (_tools.Count > 0)
+                bool hasTools = _tools.Count > 0;
+                if (hasTools)
                 {
                     options.Tools = new List<AITool>(_tools);
                     options.ToolMode = ChatToolMode.Auto;
                 }
 
                 // Process with potential tool calls in a loop
-                const int maxToolIterations = 5;
-                int toolIterations = 0;
+                _currentIteration = 0;
+                bool hadToolCalls = false;
 
-                while (toolIterations < maxToolIterations)
+                while (_currentIteration < MaxToolIterations)
                 {
                     token.ThrowIfCancellationRequested();
+                    
+                    _currentIteration++;
+                    _currentIterationReasoning.Clear();
+
+                    // If we've had tool calls, clear the current response so only final response is kept
+                    if (hadToolCalls)
+                    {
+                        _currentResponse.Clear();
+                    }
+
+                    // Emit iteration start for agent mode with tools
+                    if (hasTools)
+                    {
+                        CallDeferred(nameof(EmitAgentStepStartedSignal), _currentIteration, MaxToolIterations);
+                        GD.Print($"G0: Starting agent iteration {_currentIteration}/{MaxToolIterations}");
+                    }
 
                     // Get completion (with streaming if supported)
-                    var response = await GetCompletionWithStreamingAsync(chatMessages, options, token);
+                    // Pass whether this could be an intermediate iteration (has tools and not confirmed final)
+                    bool couldBeIntermediate = hasTools;
+                    var response = await GetCompletionWithStreamingAsync(chatMessages, options, couldBeIntermediate, token);
 
                     if (response == null)
                     {
@@ -257,12 +294,13 @@ namespace G0
                     var toolCalls = ExtractToolCalls(response);
                     if (toolCalls.Count == 0)
                     {
-                        // No more tool calls, we're done
+                        // No more tool calls, we're done - the response IS the final response
                         break;
                     }
 
-                    toolIterations++;
-                    GD.Print($"G0: Processing {toolCalls.Count} tool call(s), iteration {toolIterations}");
+                    // Mark that we've had tool calls - next iteration's streaming should not go to main response
+                    hadToolCalls = true;
+                    GD.Print($"G0: Processing {toolCalls.Count} tool call(s), iteration {_currentIteration}");
 
                     // Add assistant message with tool calls
                     chatMessages.Add(response);
@@ -270,11 +308,18 @@ namespace G0
                     // Execute each tool and add results
                     foreach (var toolCall in toolCalls)
                     {
-                        CallDeferred(nameof(EmitToolCalledSignal), toolCall.Name, toolCall.Arguments?.ToString() ?? "");
+                        var toolArgs = toolCall.Arguments?.ToString() ?? "";
+                        
+                        // Emit both old signal (for backward compatibility) and new detailed signal
+                        CallDeferred(nameof(EmitToolCalledSignal), toolCall.Name, toolArgs);
+                        CallDeferred(nameof(EmitToolCallStartedSignal), toolCall.Name, toolArgs, _currentIteration);
 
                         try
                         {
                             var result = await ExecuteToolAsync(toolCall, token);
+                            
+                            // Emit tool completion with result
+                            CallDeferred(nameof(EmitToolCallCompletedSignal), toolCall.Name, result, _currentIteration);
                             
                             // Add tool result as a message
                             var toolResultMessage = new AIChatMessage(ChatRole.Tool, result);
@@ -285,7 +330,12 @@ namespace G0
                         catch (Exception ex)
                         {
                             GD.PrintErr($"G0: Tool execution error: {ex.Message}");
-                            var errorMessage = new AIChatMessage(ChatRole.Tool, $"Error executing tool: {ex.Message}");
+                            var errorResult = $"Error executing tool: {ex.Message}";
+                            
+                            // Emit tool completion with error
+                            CallDeferred(nameof(EmitToolCallCompletedSignal), toolCall.Name, errorResult, _currentIteration);
+                            
+                            var errorMessage = new AIChatMessage(ChatRole.Tool, errorResult);
                             errorMessage.AdditionalProperties ??= new AdditionalPropertiesDictionary();
                             errorMessage.AdditionalProperties["tool_call_id"] = toolCall.CallId;
                             chatMessages.Add(errorMessage);
@@ -308,7 +358,8 @@ namespace G0
 
         private async Task<AIChatMessage> GetCompletionWithStreamingAsync(
             List<AIChatMessage> messages, 
-            ChatOptions options, 
+            ChatOptions options,
+            bool isAgentMode,
             CancellationToken token)
         {
             try
@@ -322,14 +373,7 @@ namespace G0
                 {
                     token.ThrowIfCancellationRequested();
 
-                    if (update.Text != null)
-                    {
-                        responseBuilder.Append(update.Text);
-                        _currentResponse.Append(update.Text);
-                        CallDeferred(nameof(EmitChunkSignal), update.Text);
-                    }
-
-                    // Capture the message for tool call detection
+                    // Check for function calls first to determine if this is intermediate reasoning
                     if (update.Contents != null)
                     {
                         foreach (var content in update.Contents)
@@ -344,6 +388,25 @@ namespace G0
                             }
                         }
                     }
+
+                    if (update.Text != null)
+                    {
+                        responseBuilder.Append(update.Text);
+                        _currentIterationReasoning.Append(update.Text);
+                        
+                        // In agent mode during iterations with tool calls, emit as reasoning
+                        // Otherwise emit as regular chunks (final response)
+                        if (isAgentMode && _currentIteration < MaxToolIterations)
+                        {
+                            // This could be intermediate reasoning before tool calls
+                            // We'll emit both reasoning and regular chunks - UI can decide which to show
+                            CallDeferred(nameof(EmitReasoningChunkSignal), update.Text, _currentIteration);
+                        }
+                        
+                        // Always accumulate in current response and emit chunk for final text
+                        _currentResponse.Append(update.Text);
+                        CallDeferred(nameof(EmitChunkSignal), update.Text);
+                    }
                 }
 
                 // Return the complete message
@@ -357,7 +420,13 @@ namespace G0
                 
                 if (result.Message != null && !string.IsNullOrEmpty(result.Message.Text))
                 {
+                    _currentIterationReasoning.Append(result.Message.Text);
                     _currentResponse.Append(result.Message.Text);
+                    
+                    if (isAgentMode && _currentIteration < MaxToolIterations)
+                    {
+                        CallDeferred(nameof(EmitReasoningChunkSignal), result.Message.Text, _currentIteration);
+                    }
                     CallDeferred(nameof(EmitChunkSignal), result.Message.Text);
                 }
 
@@ -436,6 +505,27 @@ namespace G0
             EmitSignal(SignalName.ToolCalled, toolName, arguments);
         }
 
+        // New emit methods for intermediate agentic step streaming
+        private void EmitAgentStepStartedSignal(int iteration, int maxIterations)
+        {
+            EmitSignal(SignalName.AgentStepStarted, iteration, maxIterations);
+        }
+
+        private void EmitReasoningChunkSignal(string chunk, int iteration)
+        {
+            EmitSignal(SignalName.ReasoningChunkReceived, chunk, iteration);
+        }
+
+        private void EmitToolCallStartedSignal(string toolName, string arguments, int iteration)
+        {
+            EmitSignal(SignalName.ToolCallStarted, toolName, arguments, iteration);
+        }
+
+        private void EmitToolCallCompletedSignal(string toolName, string result, int iteration)
+        {
+            EmitSignal(SignalName.ToolCallCompleted, toolName, result, iteration);
+        }
+
         public void CancelRequest()
         {
             _cancellationTokenSource?.Cancel();
@@ -471,41 +561,11 @@ namespace G0
             ChatOptions options = null,
             CancellationToken cancellationToken = default)
         {
-            // Convert messages to Gemini's format
-            var history = BuildChatHistory(chatMessages, out var lastUserMessage, out var systemInstruction);
-            
-            // If we only have one user message and no history, use simple generation
-            if (history.Count == 0 && lastUserMessage != null)
-            {
-                var prompt = systemInstruction != null 
-                    ? $"{systemInstruction}\n\n{lastUserMessage}" 
-                    : lastUserMessage;
-                var response = await _model.GenerateContentAsync(prompt, cancellationToken);
-                var text = response.Text() ?? "";
-                return new ChatCompletion(new AIChatMessage(ChatRole.Assistant, text));
-            }
-            
-            // Use chat session for multi-turn conversations
-            var chat = _model.CreateChatSession();
-            
-            // Add system instruction as first user/model pair if present
-            if (systemInstruction != null)
-            {
-                chat.History.Add(new GenerativeAI.Types.Content { Role = "user", Parts = new[] { new TextPart { Text = systemInstruction } } });
-                chat.History.Add(new GenerativeAI.Types.Content { Role = "model", Parts = new[] { new TextPart { Text = "I understand. I will follow these instructions." } } });
-            }
-            
-            // Add conversation history
-            foreach (var content in history)
-            {
-                chat.History.Add(content);
-            }
-            
-            // Send the last user message
-            var finalResponse = await chat.SendMessageAsync(lastUserMessage, cancellationToken: cancellationToken);
-            var responseText = finalResponse.Text() ?? "";
-            
-            return new ChatCompletion(new AIChatMessage(ChatRole.Assistant, responseText));
+            // Build a formatted prompt from all messages
+            var prompt = BuildPromptFromMessages(chatMessages);
+            var response = await _model.GenerateContentAsync(prompt, cancellationToken);
+            var text = response.Text() ?? "";
+            return new ChatCompletion(new AIChatMessage(ChatRole.Assistant, text));
         }
 
         public async IAsyncEnumerable<StreamingChatCompletionUpdate> CompleteStreamingAsync(
@@ -513,53 +573,11 @@ namespace G0
             ChatOptions options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            // Convert messages to Gemini's format
-            var history = BuildChatHistory(chatMessages, out var lastUserMessage, out var systemInstruction);
+            // Build a formatted prompt from all messages
+            var prompt = BuildPromptFromMessages(chatMessages);
+            var streamingResponse = _model.StreamContentAsync(prompt, cancellationToken: cancellationToken);
             
-            // If we only have one user message and no history, use simple streaming
-            if (history.Count == 0 && lastUserMessage != null)
-            {
-                var prompt = systemInstruction != null 
-                    ? $"{systemInstruction}\n\n{lastUserMessage}" 
-                    : lastUserMessage;
-                var streamingResponse = _model.StreamContentAsync(prompt, cancellationToken: cancellationToken);
-                
-                await foreach (var chunk in streamingResponse)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var text = chunk.Text();
-                    if (!string.IsNullOrEmpty(text))
-                    {
-                        yield return new StreamingChatCompletionUpdate
-                        {
-                            Role = ChatRole.Assistant,
-                            Text = text
-                        };
-                    }
-                }
-                yield break;
-            }
-            
-            // Use chat session for multi-turn conversations
-            var chat = _model.CreateChatSession();
-            
-            // Add system instruction as first user/model pair if present
-            if (systemInstruction != null)
-            {
-                chat.History.Add(new GenerativeAI.Types.Content { Role = "user", Parts = new[] { new TextPart { Text = systemInstruction } } });
-                chat.History.Add(new GenerativeAI.Types.Content { Role = "model", Parts = new[] { new TextPart { Text = "I understand. I will follow these instructions." } } });
-            }
-            
-            // Add conversation history
-            foreach (var content in history)
-            {
-                chat.History.Add(content);
-            }
-            
-            // Stream the response for the last user message
-            var streamingResponse2 = chat.SendMessageStreamAsync(lastUserMessage, cancellationToken: cancellationToken);
-            
-            await foreach (var chunk in streamingResponse2)
+            await foreach (var chunk in streamingResponse)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var text = chunk.Text();
@@ -585,84 +603,44 @@ namespace G0
         }
 
         /// <summary>
-        /// Builds a proper chat history for Gemini from the Microsoft.Extensions.AI message format.
-        /// Returns the history (excluding the last user message), the last user message text,
-        /// and any system instruction.
+        /// Builds a formatted prompt string from the messages list.
+        /// This approach works well with Gemini's simple API.
         /// </summary>
-        private List<GenerativeAI.Types.Content> BuildChatHistory(
-            IList<AIChatMessage> messages, 
-            out string lastUserMessage,
-            out string systemInstruction)
+        private string BuildPromptFromMessages(IList<AIChatMessage> messages)
         {
-            var history = new List<GenerativeAI.Types.Content>();
-            lastUserMessage = null;
-            systemInstruction = null;
+            var promptBuilder = new StringBuilder();
             
-            // Extract system instruction if present (should be first)
-            int startIndex = 0;
-            if (messages.Count > 0 && messages[0].Role.Value == "system")
+            foreach (var message in messages)
             {
-                systemInstruction = messages[0].Text ?? "";
-                startIndex = 1;
-            }
-            
-            // Process remaining messages, but save the last user message separately
-            for (int i = startIndex; i < messages.Count; i++)
-            {
-                var message = messages[i];
                 var text = message.Text ?? "";
-                
-                // Skip empty messages
                 if (string.IsNullOrWhiteSpace(text))
                     continue;
                 
                 switch (message.Role.Value)
                 {
+                    case "system":
+                        promptBuilder.AppendLine($"System: {text}");
+                        promptBuilder.AppendLine();
+                        break;
                     case "user":
-                        // If this is the last message, save it separately
-                        if (i == messages.Count - 1)
-                        {
-                            lastUserMessage = text;
-                        }
-                        else
-                        {
-                            history.Add(new GenerativeAI.Types.Content 
-                            { 
-                                Role = "user", 
-                                Parts = new[] { new TextPart { Text = text } } 
-                            });
-                        }
+                        promptBuilder.AppendLine($"User: {text}");
+                        promptBuilder.AppendLine();
                         break;
-                        
                     case "assistant":
-                        history.Add(new GenerativeAI.Types.Content 
-                        { 
-                            Role = "model", 
-                            Parts = new[] { new TextPart { Text = text } } 
-                        });
+                        promptBuilder.AppendLine($"Assistant: {text}");
+                        promptBuilder.AppendLine();
                         break;
-                        
                     case "tool":
-                        // Append tool results to the last assistant message or create a new model message
-                        if (history.Count > 0 && history[history.Count - 1].Role == "model")
-                        {
-                            var lastMsg = history[history.Count - 1];
-                            var lastText = lastMsg.Parts[0] is TextPart tp ? tp.Text : "";
-                            lastMsg.Parts = new[] { new TextPart { Text = $"{lastText}\n\nTool Result: {text}" } };
-                        }
-                        else
-                        {
-                            history.Add(new GenerativeAI.Types.Content 
-                            { 
-                                Role = "model", 
-                                Parts = new[] { new TextPart { Text = $"Tool Result: {text}" } } 
-                            });
-                        }
+                        promptBuilder.AppendLine($"Tool Result: {text}");
+                        promptBuilder.AppendLine();
                         break;
                 }
             }
             
-            return history;
+            // Add prompt for assistant to continue
+            promptBuilder.Append("Assistant: ");
+            
+            return promptBuilder.ToString();
         }
     }
 }

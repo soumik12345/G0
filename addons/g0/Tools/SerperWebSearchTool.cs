@@ -19,7 +19,7 @@ namespace G0.Tools
     {
         private const string SerperApiUrl = "https://google.serper.dev/search";
         private readonly string _apiKey;
-        private readonly HttpClient _httpClient;
+        private readonly System.Net.Http.HttpClient _httpClient;
 
         public SerperWebSearchTool(string apiKey)
         {
@@ -29,7 +29,7 @@ namespace G0.Tools
             }
             
             _apiKey = apiKey;
-            _httpClient = new HttpClient();
+            _httpClient = new System.Net.Http.HttpClient();
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
