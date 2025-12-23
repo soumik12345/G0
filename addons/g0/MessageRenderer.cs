@@ -350,6 +350,63 @@ namespace G0
         {
             return $"[color=#8B949E][i]{EscapeBBCode(message)}[/i][/color]";
         }
+
+        /// <summary>
+        /// Renders agent thinking/reasoning content with a distinct style.
+        /// </summary>
+        public static string RenderAgentThinking(string thinking)
+        {
+            if (string.IsNullOrEmpty(thinking))
+            {
+                return "[color=#A78BFA][i]Thinking...[/i][/color]";
+            }
+            
+            var truncated = TruncateText(thinking, 500);
+            return $"[color=#A78BFA][i]{EscapeBBCode(truncated)}[/i][/color]";
+        }
+
+        /// <summary>
+        /// Renders a tool call with tool name and abbreviated arguments.
+        /// </summary>
+        public static string RenderToolCall(string toolName, string arguments)
+        {
+            var argsPreview = TruncateText(arguments, 150);
+            return $"[color=#F59E0B][b]🔧 {EscapeBBCode(toolName)}[/b][/color]\n[color=#8B949E][code]{EscapeBBCode(argsPreview)}[/code][/color]";
+        }
+
+        /// <summary>
+        /// Renders a tool execution status (in progress).
+        /// </summary>
+        public static string RenderToolExecuting(string toolName)
+        {
+            return $"[color=#F59E0B][wave amp=10 freq=3]⚙️ Executing {EscapeBBCode(toolName)}...[/wave][/color]";
+        }
+
+        /// <summary>
+        /// Renders a tool result with tool name and abbreviated result.
+        /// </summary>
+        public static string RenderToolResult(string toolName, string result)
+        {
+            var isError = result.StartsWith("Error");
+            var icon = isError ? "❌" : "✅";
+            var color = isError ? "#EF4444" : "#10B981";
+            var resultPreview = TruncateText(result, 300);
+            
+            return $"[color={color}][b]{icon} {EscapeBBCode(toolName)}[/b][/color]\n[color=#8B949E]{EscapeBBCode(resultPreview)}[/color]";
+        }
+
+        /// <summary>
+        /// Truncates text to a maximum length with ellipsis.
+        /// </summary>
+        private static string TruncateText(string text, int maxLength)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+            {
+                return text;
+            }
+            
+            return text.Substring(0, maxLength) + "...";
+        }
     }
 }
 #endif

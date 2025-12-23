@@ -2,7 +2,6 @@
 using Godot;
 using System;
 using System.Collections.Generic;
-using System.Text;
 using G0.Models;
 using G0.Documentation;
 
@@ -28,10 +27,6 @@ namespace G0
         private Button _sendButton;
         private PopupMenu _contextMenu;
 
-        // Intermediate steps UI elements
-        private VBoxContainer _intermediateStepsContainer;
-        private VBoxContainer _currentStreamingVBox;
-
         // Components
         private SettingsManager _settingsManager;
         private AgentClient _agentClient;
@@ -42,15 +37,6 @@ namespace G0
         private bool _isStreaming;
         private string _currentStreamingContent;
         private RichTextLabel _selectedMessageLabel;
-
-        // Intermediate steps state
-        private int _currentIteration;
-        private StringBuilder _currentReasoningContent;
-        private List<AgentStep> _currentSteps;
-        private Dictionary<string, ExpandableStepSection> _stepSections;
-        private string _currentToolName;
-        private string _currentToolArgs;
-        private bool _hadToolCallsInSession;  // Tracks if tool calls were made, meaning current iteration is intermediate
 
         public override void _Ready()
         {
@@ -78,17 +64,9 @@ namespace G0
             _agentClient.StreamComplete += OnStreamComplete;
             _agentClient.ErrorOccurred += OnErrorOccurred;
             _agentClient.ToolCalled += OnToolCalled;
-
-            // Connect new intermediate step signals
-            _agentClient.AgentStepStarted += OnAgentStepStarted;
-            _agentClient.ReasoningChunkReceived += OnReasoningChunkReceived;
-            _agentClient.ToolCallStarted += OnToolCallStarted;
-            _agentClient.ToolCallCompleted += OnToolCallCompleted;
-
-            // Initialize intermediate steps state
-            _currentReasoningContent = new StringBuilder();
-            _currentSteps = new List<AgentStep>();
-            _stepSections = new Dictionary<string, ExpandableStepSection>();
+            _agentClient.AgentThinking += OnAgentThinking;
+            _agentClient.ToolExecuting += OnToolExecuting;
+            _agentClient.ToolResultReceived += OnToolResultReceived;
 
             // Build UI
             BuildUI();
@@ -322,15 +300,6 @@ namespace G0
 
         private void AddStreamingMessage()
         {
-            // Reset intermediate step state
-            _currentIteration = 0;
-            _currentReasoningContent.Clear();
-            _currentSteps.Clear();
-            _stepSections.Clear();
-            _currentToolName = null;
-            _currentToolArgs = null;
-            _hadToolCallsInSession = false;
-
             var messageContainer = new PanelContainer();
             messageContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             messageContainer.Name = "StreamingMessage";
@@ -347,23 +316,16 @@ namespace G0
             styleBox.CornerRadiusBottomRight = 8;
             messageContainer.AddThemeStyleboxOverride("panel", styleBox);
 
-            _currentStreamingVBox = new VBoxContainer();
-            _currentStreamingVBox.AddThemeConstantOverride("separation", 4);
-            messageContainer.AddChild(_currentStreamingVBox);
+            var vbox = new VBoxContainer();
+            vbox.AddThemeConstantOverride("separation", 4);
+            messageContainer.AddChild(vbox);
 
             var roleLabel = new Label();
             roleLabel.Text = "Assistant";
             roleLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.8f, 0.6f));
             roleLabel.AddThemeFontSizeOverride("font_size", 12);
-            _currentStreamingVBox.AddChild(roleLabel);
+            vbox.AddChild(roleLabel);
 
-            // Container for intermediate steps (expandable sections)
-            _intermediateStepsContainer = new VBoxContainer();
-            _intermediateStepsContainer.AddThemeConstantOverride("separation", 8);
-            _intermediateStepsContainer.Name = "IntermediateSteps";
-            _currentStreamingVBox.AddChild(_intermediateStepsContainer);
-
-            // Final response label (streaming text)
             _currentStreamingLabel = new RichTextLabel();
             _currentStreamingLabel.BbcodeEnabled = true;
             _currentStreamingLabel.FitContent = true;
@@ -373,7 +335,7 @@ namespace G0
             _currentStreamingLabel.CustomMinimumSize = new Vector2(0, 20);
             _currentStreamingLabel.Clear();
             _currentStreamingLabel.AppendText(MessageRenderer.RenderTypingIndicator());
-            _currentStreamingVBox.AddChild(_currentStreamingLabel);
+            vbox.AddChild(_currentStreamingLabel);
 
             _messagesContainer.AddChild(messageContainer);
         }
@@ -389,52 +351,16 @@ namespace G0
 
         private void FinalizeStreamingMessage(string fullContent)
         {
+            // Remove the streaming message container
             var streamingMessage = _messagesContainer.GetNodeOrNull("StreamingMessage");
-            
-            // Check if we have intermediate steps to preserve
-            bool hasIntermediateSteps = _currentSteps != null && _currentSteps.Count > 0;
-            
-            if (hasIntermediateSteps && streamingMessage != null)
+            if (streamingMessage != null)
             {
-                // Preserve the streaming message container with intermediate steps
-                // Just rename it so it's no longer treated as "streaming"
-                streamingMessage.Name = $"AssistantMessage_{DateTime.Now.Ticks}";
-                
-                // Update the final response label with properly rendered content
-                if (_currentStreamingLabel != null)
-                {
-                    _currentStreamingLabel.Clear();
-                    _currentStreamingLabel.AppendText(MessageRenderer.RenderMessage(fullContent));
-                    
-                    // Add context menu handler
-                    var label = _currentStreamingLabel;
-                    label.GuiInput += (InputEvent @event) => OnMessageGuiInput(@event, label, fullContent);
-                }
-                
-                // Save to history - create a message with the steps
-                var message = new ChatMessage("assistant", fullContent);
-                message.AgentSteps = new List<AgentStep>(_currentSteps);
-                _settingsManager.AddMessage(message);
-                
-                // Clear state
-                _currentStreamingLabel = null;
-                _currentStreamingVBox = null;
-                _intermediateStepsContainer = null;
+                streamingMessage.QueueFree();
             }
-            else
-            {
-                // No intermediate steps - use the simple approach
-                if (streamingMessage != null)
-                {
-                    streamingMessage.QueueFree();
-                }
-                _currentStreamingLabel = null;
-                _currentStreamingVBox = null;
-                _intermediateStepsContainer = null;
+            _currentStreamingLabel = null;
 
-                // Add as a regular message
-                AddMessageToUI("assistant", fullContent, true);
-            }
+            // Add as a regular message
+            AddMessageToUI("assistant", fullContent, true);
         }
 
         private void ScrollToBottom()
@@ -564,233 +490,29 @@ namespace G0
         
         private void OnToolCalled(string toolName, string arguments)
         {
-            // Show status when agent calls a tool (backward compatibility)
+            // Show status when agent calls a tool
             _statusLabel.Text = $"🔧 Calling {toolName}...";
             _statusLabel.Visible = true;
         }
 
-        private void OnAgentStepStarted(int iteration, int maxIterations)
+        private void OnAgentThinking(string thinking)
         {
-            _currentIteration = iteration;
-            _currentReasoningContent.Clear();
-
-            // If this is not the first iteration, we've had tool calls
-            // Clear the streaming content since we're starting fresh
-            if (iteration > 1)
-            {
-                _currentStreamingContent = "";
-                if (_currentStreamingLabel != null)
-                {
-                    _currentStreamingLabel.Clear();
-                    _currentStreamingLabel.AppendText(MessageRenderer.RenderTypingIndicator());
-                }
-            }
-
-            // Add iteration section to UI
-            if (_intermediateStepsContainer != null)
-            {
-                var sectionId = $"iteration_{iteration}";
-                var section = CreateExpandableSection(
-                    sectionId,
-                    IntermediateStepRenderer.RenderIterationHeader(iteration, maxIterations),
-                    "", // Content will be filled as reasoning comes in
-                    false // Start collapsed
-                );
-                _intermediateStepsContainer.AddChild(section.Container);
-                _stepSections[sectionId] = section;
-
-                // Record step
-                var step = AgentStep.CreateIterationStart(iteration);
-                _currentSteps.Add(step);
-            }
-
-            ScrollToBottom();
-            GD.Print($"G0: Agent step started - iteration {iteration}/{maxIterations}");
-        }
-
-        private void OnReasoningChunkReceived(string chunk, int iteration)
-        {
-            _currentReasoningContent.Append(chunk);
-
-            // Update the reasoning section for this iteration
-            var sectionId = $"iteration_{iteration}";
-            if (_stepSections.TryGetValue(sectionId, out var section))
-            {
-                var reasoningText = IntermediateStepRenderer.RenderReasoning(_currentReasoningContent.ToString());
-                section.ContentLabel.Clear();
-                section.ContentLabel.AppendText(reasoningText);
-            }
-
+            // Display agent thinking/reasoning as an intermediate message bubble
+            AddAgentThinkingBubble(thinking);
             ScrollToBottom();
         }
 
-        private void OnToolCallStarted(string toolName, string arguments, int iteration)
+        private void OnToolExecuting(string toolName, string arguments)
         {
-            _currentToolName = toolName;
-            _currentToolArgs = arguments;
-            _hadToolCallsInSession = true;
-
-            // Hide status label since we're showing in the panel
-            _statusLabel.Visible = false;
-            
-            // Clear the main streaming label since this iteration is intermediate reasoning
-            // The reasoning is already shown in the collapsible section
-            _currentStreamingContent = "";
-            if (_currentStreamingLabel != null)
-            {
-                _currentStreamingLabel.Clear();
-                _currentStreamingLabel.AppendText(MessageRenderer.RenderTypingIndicator());
-            }
-
-            // Add tool call section to UI
-            if (_intermediateStepsContainer != null)
-            {
-                var sectionId = $"tool_{toolName}_{iteration}_{_stepSections.Count}";
-                var headerText = IntermediateStepRenderer.RenderToolCallHeader(toolName);
-                var argsText = IntermediateStepRenderer.RenderToolArguments(arguments);
-                var progressText = IntermediateStepRenderer.RenderProgress("Executing");
-
-                var section = CreateExpandableSection(
-                    sectionId,
-                    headerText,
-                    argsText + "\n" + progressText,
-                    false // Start collapsed
-                );
-                _intermediateStepsContainer.AddChild(section.Container);
-                _stepSections[sectionId] = section;
-
-                // Record step
-                var step = AgentStep.CreateToolCall(toolName, arguments, iteration);
-                _currentSteps.Add(step);
-            }
-
+            // Display tool execution as an intermediate message bubble
+            AddToolCallBubble(toolName, arguments);
             ScrollToBottom();
-            GD.Print($"G0: Tool call started - {toolName}");
         }
 
-        private void OnToolCallCompleted(string toolName, string result, int iteration)
+        private void OnToolResultReceived(string toolName, string result)
         {
-            // Find and update the tool section
-            var sectionKey = "";
-            foreach (var key in _stepSections.Keys)
-            {
-                if (key.StartsWith($"tool_{toolName}_{iteration}"))
-                {
-                    sectionKey = key;
-                    break;
-                }
-            }
-
-            if (!string.IsNullOrEmpty(sectionKey) && _stepSections.TryGetValue(sectionKey, out var section))
-            {
-                var isError = result?.StartsWith("Error") ?? false;
-                var argsText = IntermediateStepRenderer.RenderToolArguments(_currentToolArgs ?? "");
-                var resultText = IntermediateStepRenderer.RenderToolResult(result, isError);
-
-                section.ContentLabel.Clear();
-                section.ContentLabel.AppendText(argsText + "\n" + resultText);
-
-                // Update header to show completion status
-                var headerText = IntermediateStepRenderer.RenderCollapsedToolCall(toolName, true);
-                section.HeaderLabel.Clear();
-                section.HeaderLabel.AppendText(headerText);
-            }
-
-            // Record step
-            var step = AgentStep.CreateToolResult(toolName, result, iteration);
-            _currentSteps.Add(step);
-
-            ScrollToBottom();
-            GD.Print($"G0: Tool call completed - {toolName}");
-        }
-
-        /// <summary>
-        /// Creates an expandable/collapsible section for intermediate steps.
-        /// </summary>
-        private ExpandableStepSection CreateExpandableSection(string id, string headerBBCode, string contentBBCode, bool startCollapsed)
-        {
-            var container = new VBoxContainer();
-            container.Name = id;
-            container.AddThemeConstantOverride("separation", 2);
-
-            // Header row with expand/collapse button
-            var headerRow = new HBoxContainer();
-            headerRow.AddThemeConstantOverride("separation", 4);
-            container.AddChild(headerRow);
-
-            // Expand/collapse button
-            var expandButton = new Button();
-            expandButton.Text = startCollapsed ? "▶" : "▼";
-            expandButton.Flat = true;
-            expandButton.CustomMinimumSize = new Vector2(20, 20);
-            expandButton.AddThemeFontSizeOverride("font_size", 10);
-            headerRow.AddChild(expandButton);
-
-            // Header label
-            var headerLabel = new RichTextLabel();
-            headerLabel.BbcodeEnabled = true;
-            headerLabel.FitContent = true;
-            headerLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            headerLabel.ScrollActive = false;
-            headerLabel.CustomMinimumSize = new Vector2(0, 18);
-            headerLabel.Clear();
-            headerLabel.AppendText(headerBBCode);
-            headerRow.AddChild(headerLabel);
-
-            // Content container (collapsible)
-            var contentContainer = new PanelContainer();
-            contentContainer.Visible = !startCollapsed;
-            container.AddChild(contentContainer);
-
-            // Style the content container
-            var contentStyle = new StyleBoxFlat();
-            contentStyle.BgColor = new Color(0.08f, 0.08f, 0.08f, 0.9f);
-            contentStyle.ContentMarginLeft = 8;
-            contentStyle.ContentMarginRight = 8;
-            contentStyle.ContentMarginTop = 6;
-            contentStyle.ContentMarginBottom = 6;
-            contentStyle.CornerRadiusTopLeft = 4;
-            contentStyle.CornerRadiusTopRight = 4;
-            contentStyle.CornerRadiusBottomLeft = 4;
-            contentStyle.CornerRadiusBottomRight = 4;
-            contentContainer.AddThemeStyleboxOverride("panel", contentStyle);
-
-            // Content label
-            var contentLabel = new RichTextLabel();
-            contentLabel.BbcodeEnabled = true;
-            contentLabel.FitContent = true;
-            contentLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            contentLabel.ScrollActive = false;
-            contentLabel.SelectionEnabled = true;
-            contentLabel.CustomMinimumSize = new Vector2(0, 20);
-            contentLabel.Clear();
-            if (!string.IsNullOrEmpty(contentBBCode))
-            {
-                contentLabel.AppendText(contentBBCode);
-            }
-            contentContainer.AddChild(contentLabel);
-
-            // Wire up expand/collapse toggle
-            var section = new ExpandableStepSection
-            {
-                Container = container,
-                ExpandButton = expandButton,
-                HeaderLabel = headerLabel,
-                ContentContainer = contentContainer,
-                ContentLabel = contentLabel,
-                IsExpanded = !startCollapsed
-            };
-
-            expandButton.Pressed += () => ToggleSection(section);
-
-            return section;
-        }
-
-        private void ToggleSection(ExpandableStepSection section)
-        {
-            section.IsExpanded = !section.IsExpanded;
-            section.ContentContainer.Visible = section.IsExpanded;
-            section.ExpandButton.Text = section.IsExpanded ? "▼" : "▶";
+            // Display tool result as an intermediate message bubble
+            AddToolResultBubble(toolName, result);
             ScrollToBottom();
         }
         
@@ -906,6 +628,139 @@ namespace G0
             ScrollToBottom();
         }
 
+        private void AddAgentThinkingBubble(string thinking)
+        {
+            var container = new PanelContainer();
+            container.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+            var styleBox = new StyleBoxFlat();
+            styleBox.BgColor = new Color(0.2f, 0.15f, 0.3f, 0.6f); // Purple-ish tint for thinking
+            styleBox.ContentMarginLeft = 12;
+            styleBox.ContentMarginRight = 12;
+            styleBox.ContentMarginTop = 8;
+            styleBox.ContentMarginBottom = 8;
+            styleBox.CornerRadiusTopLeft = 8;
+            styleBox.CornerRadiusTopRight = 8;
+            styleBox.CornerRadiusBottomLeft = 8;
+            styleBox.CornerRadiusBottomRight = 8;
+            styleBox.BorderWidthLeft = 3;
+            styleBox.BorderColor = new Color(0.65f, 0.55f, 0.98f); // Purple border
+            container.AddThemeStyleboxOverride("panel", styleBox);
+
+            var vbox = new VBoxContainer();
+            vbox.AddThemeConstantOverride("separation", 4);
+            container.AddChild(vbox);
+
+            var headerLabel = new Label();
+            headerLabel.Text = "💭 Thinking";
+            headerLabel.AddThemeColorOverride("font_color", new Color(0.65f, 0.55f, 0.98f));
+            headerLabel.AddThemeFontSizeOverride("font_size", 11);
+            vbox.AddChild(headerLabel);
+
+            var contentLabel = new RichTextLabel();
+            contentLabel.BbcodeEnabled = true;
+            contentLabel.FitContent = true;
+            contentLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            contentLabel.ScrollActive = false;
+            contentLabel.CustomMinimumSize = new Vector2(0, 20);
+            contentLabel.Clear();
+            contentLabel.AppendText(MessageRenderer.RenderAgentThinking(thinking));
+            vbox.AddChild(contentLabel);
+
+            _messagesContainer.AddChild(container);
+        }
+
+        private void AddToolCallBubble(string toolName, string arguments)
+        {
+            var container = new PanelContainer();
+            container.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+            var styleBox = new StyleBoxFlat();
+            styleBox.BgColor = new Color(0.25f, 0.2f, 0.1f, 0.6f); // Orange-ish tint for tool calls
+            styleBox.ContentMarginLeft = 12;
+            styleBox.ContentMarginRight = 12;
+            styleBox.ContentMarginTop = 8;
+            styleBox.ContentMarginBottom = 8;
+            styleBox.CornerRadiusTopLeft = 8;
+            styleBox.CornerRadiusTopRight = 8;
+            styleBox.CornerRadiusBottomLeft = 8;
+            styleBox.CornerRadiusBottomRight = 8;
+            styleBox.BorderWidthLeft = 3;
+            styleBox.BorderColor = new Color(0.96f, 0.62f, 0.04f); // Orange border
+            container.AddThemeStyleboxOverride("panel", styleBox);
+
+            var vbox = new VBoxContainer();
+            vbox.AddThemeConstantOverride("separation", 4);
+            container.AddChild(vbox);
+
+            var headerLabel = new Label();
+            headerLabel.Text = "🔧 Tool Call";
+            headerLabel.AddThemeColorOverride("font_color", new Color(0.96f, 0.62f, 0.04f));
+            headerLabel.AddThemeFontSizeOverride("font_size", 11);
+            vbox.AddChild(headerLabel);
+
+            var contentLabel = new RichTextLabel();
+            contentLabel.BbcodeEnabled = true;
+            contentLabel.FitContent = true;
+            contentLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            contentLabel.ScrollActive = false;
+            contentLabel.CustomMinimumSize = new Vector2(0, 20);
+            contentLabel.Clear();
+            contentLabel.AppendText(MessageRenderer.RenderToolCall(toolName, arguments));
+            vbox.AddChild(contentLabel);
+
+            _messagesContainer.AddChild(container);
+        }
+
+        private void AddToolResultBubble(string toolName, string result)
+        {
+            var container = new PanelContainer();
+            container.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+            var isError = result.StartsWith("Error");
+            var styleBox = new StyleBoxFlat();
+            styleBox.BgColor = isError 
+                ? new Color(0.25f, 0.1f, 0.1f, 0.6f)  // Red-ish tint for errors
+                : new Color(0.1f, 0.2f, 0.15f, 0.6f); // Green-ish tint for success
+            styleBox.ContentMarginLeft = 12;
+            styleBox.ContentMarginRight = 12;
+            styleBox.ContentMarginTop = 8;
+            styleBox.ContentMarginBottom = 8;
+            styleBox.CornerRadiusTopLeft = 8;
+            styleBox.CornerRadiusTopRight = 8;
+            styleBox.CornerRadiusBottomLeft = 8;
+            styleBox.CornerRadiusBottomRight = 8;
+            styleBox.BorderWidthLeft = 3;
+            styleBox.BorderColor = isError 
+                ? new Color(0.94f, 0.27f, 0.27f)  // Red border
+                : new Color(0.06f, 0.73f, 0.51f); // Green border
+            container.AddThemeStyleboxOverride("panel", styleBox);
+
+            var vbox = new VBoxContainer();
+            vbox.AddThemeConstantOverride("separation", 4);
+            container.AddChild(vbox);
+
+            var headerLabel = new Label();
+            headerLabel.Text = isError ? "❌ Tool Error" : "✅ Tool Result";
+            headerLabel.AddThemeColorOverride("font_color", isError 
+                ? new Color(0.94f, 0.27f, 0.27f) 
+                : new Color(0.06f, 0.73f, 0.51f));
+            headerLabel.AddThemeFontSizeOverride("font_size", 11);
+            vbox.AddChild(headerLabel);
+
+            var contentLabel = new RichTextLabel();
+            contentLabel.BbcodeEnabled = true;
+            contentLabel.FitContent = true;
+            contentLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            contentLabel.ScrollActive = false;
+            contentLabel.CustomMinimumSize = new Vector2(0, 20);
+            contentLabel.Clear();
+            contentLabel.AppendText(MessageRenderer.RenderToolResult(toolName, result));
+            vbox.AddChild(contentLabel);
+
+            _messagesContainer.AddChild(container);
+        }
+
         private void OnSettingsSaved(G0Settings newSettings)
         {
             _settingsManager.UpdateSettings(newSettings);
@@ -980,10 +835,9 @@ namespace G0
                 _agentClient.StreamComplete -= OnStreamComplete;
                 _agentClient.ErrorOccurred -= OnErrorOccurred;
                 _agentClient.ToolCalled -= OnToolCalled;
-                _agentClient.AgentStepStarted -= OnAgentStepStarted;
-                _agentClient.ReasoningChunkReceived -= OnReasoningChunkReceived;
-                _agentClient.ToolCallStarted -= OnToolCallStarted;
-                _agentClient.ToolCallCompleted -= OnToolCallCompleted;
+                _agentClient.AgentThinking -= OnAgentThinking;
+                _agentClient.ToolExecuting -= OnToolExecuting;
+                _agentClient.ToolResultReceived -= OnToolResultReceived;
             }
             
             if (_docsIndexer != null)
@@ -1023,19 +877,6 @@ namespace G0
         /// Gets the documentation indexer for use by the settings dialog.
         /// </summary>
         public GodotDocsIndexer DocsIndexer => _docsIndexer;
-    }
-
-    /// <summary>
-    /// Helper class to track expandable section UI elements.
-    /// </summary>
-    internal class ExpandableStepSection
-    {
-        public VBoxContainer Container { get; set; }
-        public Button ExpandButton { get; set; }
-        public RichTextLabel HeaderLabel { get; set; }
-        public PanelContainer ContentContainer { get; set; }
-        public RichTextLabel ContentLabel { get; set; }
-        public bool IsExpanded { get; set; }
     }
 }
 #endif

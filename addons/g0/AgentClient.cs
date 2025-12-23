@@ -22,7 +22,6 @@ namespace G0
     /// </summary>
     public partial class AgentClient : Node
     {
-        // Existing signals for backward compatibility
         [Signal]
         public delegate void ChunkReceivedEventHandler(string chunk);
 
@@ -35,27 +34,20 @@ namespace G0
         [Signal]
         public delegate void ToolCalledEventHandler(string toolName, string arguments);
 
-        // New signals for intermediate agentic step streaming
         [Signal]
-        public delegate void AgentStepStartedEventHandler(int iteration, int maxIterations);
+        public delegate void AgentThinkingEventHandler(string thinking);
 
         [Signal]
-        public delegate void ReasoningChunkReceivedEventHandler(string chunk, int iteration);
+        public delegate void ToolExecutingEventHandler(string toolName, string arguments);
 
         [Signal]
-        public delegate void ToolCallStartedEventHandler(string toolName, string arguments, int iteration);
-
-        [Signal]
-        public delegate void ToolCallCompletedEventHandler(string toolName, string result, int iteration);
+        public delegate void ToolResultReceivedEventHandler(string toolName, string result);
 
         private Models.G0Settings _settings;
         private IChatClient _chatClient;
         private List<AITool> _tools;
         private StringBuilder _currentResponse;
-        private StringBuilder _currentIterationReasoning;
         private bool _isStreaming;
-        private int _currentIteration;
-        private const int MaxToolIterations = 5;
         private CancellationTokenSource _cancellationTokenSource;
         private DocumentationIndex _documentationIndex;
 
@@ -64,7 +56,6 @@ namespace G0
         public override void _Ready()
         {
             _currentResponse = new StringBuilder();
-            _currentIterationReasoning = new StringBuilder();
             _tools = new List<AITool>();
         }
 
@@ -249,41 +240,22 @@ namespace G0
 
                 // Create chat options with tools if available
                 var options = new ChatOptions();
-                bool hasTools = _tools.Count > 0;
-                if (hasTools)
+                if (_tools.Count > 0)
                 {
                     options.Tools = new List<AITool>(_tools);
                     options.ToolMode = ChatToolMode.Auto;
                 }
 
                 // Process with potential tool calls in a loop
-                _currentIteration = 0;
-                bool hadToolCalls = false;
+                int maxToolIterations = _settings.MaxAgentIterations;
+                int toolIterations = 0;
 
-                while (_currentIteration < MaxToolIterations)
+                while (toolIterations < maxToolIterations)
                 {
                     token.ThrowIfCancellationRequested();
-                    
-                    _currentIteration++;
-                    _currentIterationReasoning.Clear();
-
-                    // If we've had tool calls, clear the current response so only final response is kept
-                    if (hadToolCalls)
-                    {
-                        _currentResponse.Clear();
-                    }
-
-                    // Emit iteration start for agent mode with tools
-                    if (hasTools)
-                    {
-                        CallDeferred(nameof(EmitAgentStepStartedSignal), _currentIteration, MaxToolIterations);
-                        GD.Print($"G0: Starting agent iteration {_currentIteration}/{MaxToolIterations}");
-                    }
 
                     // Get completion (with streaming if supported)
-                    // Pass whether this could be an intermediate iteration (has tools and not confirmed final)
-                    bool couldBeIntermediate = hasTools;
-                    var response = await GetCompletionWithStreamingAsync(chatMessages, options, couldBeIntermediate, token);
+                    var response = await GetCompletionWithStreamingAsync(chatMessages, options, token);
 
                     if (response == null)
                     {
@@ -294,13 +266,19 @@ namespace G0
                     var toolCalls = ExtractToolCalls(response);
                     if (toolCalls.Count == 0)
                     {
-                        // No more tool calls, we're done - the response IS the final response
+                        // No more tool calls, we're done
                         break;
                     }
 
-                    // Mark that we've had tool calls - next iteration's streaming should not go to main response
-                    hadToolCalls = true;
-                    GD.Print($"G0: Processing {toolCalls.Count} tool call(s), iteration {_currentIteration}");
+                    toolIterations++;
+                    GD.Print($"G0: Processing {toolCalls.Count} tool call(s), iteration {toolIterations}");
+
+                    // Emit agent thinking signal with any text content from the response
+                    var thinkingText = response.Text;
+                    if (!string.IsNullOrEmpty(thinkingText))
+                    {
+                        CallDeferred(nameof(EmitAgentThinkingSignal), thinkingText);
+                    }
 
                     // Add assistant message with tool calls
                     chatMessages.Add(response);
@@ -308,18 +286,16 @@ namespace G0
                     // Execute each tool and add results
                     foreach (var toolCall in toolCalls)
                     {
-                        var toolArgs = toolCall.Arguments?.ToString() ?? "";
-                        
-                        // Emit both old signal (for backward compatibility) and new detailed signal
-                        CallDeferred(nameof(EmitToolCalledSignal), toolCall.Name, toolArgs);
-                        CallDeferred(nameof(EmitToolCallStartedSignal), toolCall.Name, toolArgs, _currentIteration);
+                        var argumentsStr = toolCall.Arguments?.ToString() ?? "{}";
+                        CallDeferred(nameof(EmitToolCalledSignal), toolCall.Name, argumentsStr);
+                        CallDeferred(nameof(EmitToolExecutingSignal), toolCall.Name, argumentsStr);
 
                         try
                         {
                             var result = await ExecuteToolAsync(toolCall, token);
                             
-                            // Emit tool completion with result
-                            CallDeferred(nameof(EmitToolCallCompletedSignal), toolCall.Name, result, _currentIteration);
+                            // Emit tool result signal
+                            CallDeferred(nameof(EmitToolResultReceivedSignal), toolCall.Name, result);
                             
                             // Add tool result as a message
                             var toolResultMessage = new AIChatMessage(ChatRole.Tool, result);
@@ -332,8 +308,8 @@ namespace G0
                             GD.PrintErr($"G0: Tool execution error: {ex.Message}");
                             var errorResult = $"Error executing tool: {ex.Message}";
                             
-                            // Emit tool completion with error
-                            CallDeferred(nameof(EmitToolCallCompletedSignal), toolCall.Name, errorResult, _currentIteration);
+                            // Emit error as tool result
+                            CallDeferred(nameof(EmitToolResultReceivedSignal), toolCall.Name, errorResult);
                             
                             var errorMessage = new AIChatMessage(ChatRole.Tool, errorResult);
                             errorMessage.AdditionalProperties ??= new AdditionalPropertiesDictionary();
@@ -358,8 +334,7 @@ namespace G0
 
         private async Task<AIChatMessage> GetCompletionWithStreamingAsync(
             List<AIChatMessage> messages, 
-            ChatOptions options,
-            bool isAgentMode,
+            ChatOptions options, 
             CancellationToken token)
         {
             try
@@ -373,7 +348,14 @@ namespace G0
                 {
                     token.ThrowIfCancellationRequested();
 
-                    // Check for function calls first to determine if this is intermediate reasoning
+                    if (update.Text != null)
+                    {
+                        responseBuilder.Append(update.Text);
+                        _currentResponse.Append(update.Text);
+                        CallDeferred(nameof(EmitChunkSignal), update.Text);
+                    }
+
+                    // Capture the message for tool call detection
                     if (update.Contents != null)
                     {
                         foreach (var content in update.Contents)
@@ -388,25 +370,6 @@ namespace G0
                             }
                         }
                     }
-
-                    if (update.Text != null)
-                    {
-                        responseBuilder.Append(update.Text);
-                        _currentIterationReasoning.Append(update.Text);
-                        
-                        // In agent mode during iterations with tool calls, emit as reasoning
-                        // Otherwise emit as regular chunks (final response)
-                        if (isAgentMode && _currentIteration < MaxToolIterations)
-                        {
-                            // This could be intermediate reasoning before tool calls
-                            // We'll emit both reasoning and regular chunks - UI can decide which to show
-                            CallDeferred(nameof(EmitReasoningChunkSignal), update.Text, _currentIteration);
-                        }
-                        
-                        // Always accumulate in current response and emit chunk for final text
-                        _currentResponse.Append(update.Text);
-                        CallDeferred(nameof(EmitChunkSignal), update.Text);
-                    }
                 }
 
                 // Return the complete message
@@ -420,13 +383,7 @@ namespace G0
                 
                 if (result.Message != null && !string.IsNullOrEmpty(result.Message.Text))
                 {
-                    _currentIterationReasoning.Append(result.Message.Text);
                     _currentResponse.Append(result.Message.Text);
-                    
-                    if (isAgentMode && _currentIteration < MaxToolIterations)
-                    {
-                        CallDeferred(nameof(EmitReasoningChunkSignal), result.Message.Text, _currentIteration);
-                    }
                     CallDeferred(nameof(EmitChunkSignal), result.Message.Text);
                 }
 
@@ -505,25 +462,19 @@ namespace G0
             EmitSignal(SignalName.ToolCalled, toolName, arguments);
         }
 
-        // New emit methods for intermediate agentic step streaming
-        private void EmitAgentStepStartedSignal(int iteration, int maxIterations)
+        private void EmitAgentThinkingSignal(string thinking)
         {
-            EmitSignal(SignalName.AgentStepStarted, iteration, maxIterations);
+            EmitSignal(SignalName.AgentThinking, thinking);
         }
 
-        private void EmitReasoningChunkSignal(string chunk, int iteration)
+        private void EmitToolExecutingSignal(string toolName, string arguments)
         {
-            EmitSignal(SignalName.ReasoningChunkReceived, chunk, iteration);
+            EmitSignal(SignalName.ToolExecuting, toolName, arguments);
         }
 
-        private void EmitToolCallStartedSignal(string toolName, string arguments, int iteration)
+        private void EmitToolResultReceivedSignal(string toolName, string result)
         {
-            EmitSignal(SignalName.ToolCallStarted, toolName, arguments, iteration);
-        }
-
-        private void EmitToolCallCompletedSignal(string toolName, string result, int iteration)
-        {
-            EmitSignal(SignalName.ToolCallCompleted, toolName, result, iteration);
+            EmitSignal(SignalName.ToolResultReceived, toolName, result);
         }
 
         public void CancelRequest()
@@ -541,7 +492,7 @@ namespace G0
 
     /// <summary>
     /// Adapter to wrap the Google GenerativeAI SDK as an IChatClient.
-    /// This adapter properly maintains conversation context by using Gemini's chat session API.
+    /// This adapter builds conversation context as a formatted prompt.
     /// </summary>
     internal class GeminiChatClientAdapter : IChatClient
     {
@@ -561,8 +512,7 @@ namespace G0
             ChatOptions options = null,
             CancellationToken cancellationToken = default)
         {
-            // Build a formatted prompt from all messages
-            var prompt = BuildPromptFromMessages(chatMessages);
+            var prompt = BuildFullPrompt(chatMessages);
             var response = await _model.GenerateContentAsync(prompt, cancellationToken);
             var text = response.Text() ?? "";
             return new ChatCompletion(new AIChatMessage(ChatRole.Assistant, text));
@@ -573,8 +523,7 @@ namespace G0
             ChatOptions options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            // Build a formatted prompt from all messages
-            var prompt = BuildPromptFromMessages(chatMessages);
+            var prompt = BuildFullPrompt(chatMessages);
             var streamingResponse = _model.StreamContentAsync(prompt, cancellationToken: cancellationToken);
             
             await foreach (var chunk in streamingResponse)
@@ -603,10 +552,9 @@ namespace G0
         }
 
         /// <summary>
-        /// Builds a formatted prompt string from the messages list.
-        /// This approach works well with Gemini's simple API.
+        /// Builds a full prompt string from the chat messages, including system instruction and history.
         /// </summary>
-        private string BuildPromptFromMessages(IList<AIChatMessage> messages)
+        private string BuildFullPrompt(IList<AIChatMessage> messages)
         {
             var promptBuilder = new StringBuilder();
             
@@ -619,26 +567,33 @@ namespace G0
                 switch (message.Role.Value)
                 {
                     case "system":
-                        promptBuilder.AppendLine($"System: {text}");
+                        promptBuilder.AppendLine("[System Instructions]");
+                        promptBuilder.AppendLine(text);
                         promptBuilder.AppendLine();
                         break;
+                        
                     case "user":
-                        promptBuilder.AppendLine($"User: {text}");
+                        promptBuilder.AppendLine("[User]");
+                        promptBuilder.AppendLine(text);
                         promptBuilder.AppendLine();
                         break;
+                        
                     case "assistant":
-                        promptBuilder.AppendLine($"Assistant: {text}");
+                        promptBuilder.AppendLine("[Assistant]");
+                        promptBuilder.AppendLine(text);
                         promptBuilder.AppendLine();
                         break;
+                        
                     case "tool":
-                        promptBuilder.AppendLine($"Tool Result: {text}");
+                        promptBuilder.AppendLine("[Tool Result]");
+                        promptBuilder.AppendLine(text);
                         promptBuilder.AppendLine();
                         break;
                 }
             }
             
-            // Add prompt for assistant to continue
-            promptBuilder.Append("Assistant: ");
+            // Add instruction for the assistant to respond
+            promptBuilder.AppendLine("[Assistant]");
             
             return promptBuilder.ToString();
         }

@@ -28,6 +28,7 @@ namespace G0
         // Agent Tab
         private VBoxContainer _agentContainer;
         private CheckBox _useAgentCheckbox;
+        private SpinBox _maxIterationsInput;
         private TextEdit _systemPromptInput;
         private Button _downloadDocsButton;
         private Label _docsStatusLabel;
@@ -45,14 +46,14 @@ namespace G0
         public override void _Ready()
         {
             Title = "G0 Settings";
-            Size = new Vector2I(500, 520);
+            Size = new Vector2I(520, 620);
             Exclusive = true;
             Unresizable = false;
 
             // Tab container
             _tabContainer = new TabContainer();
             _tabContainer.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            _tabContainer.CustomMinimumSize = new Vector2(480, 450);
+            _tabContainer.CustomMinimumSize = new Vector2(500, 550);
             AddChild(_tabContainer);
 
             // Build tabs
@@ -177,6 +178,30 @@ namespace G0
             _useAgentCheckbox.Text = "Enable AI Agent with Tool Calling";
             _useAgentCheckbox.TooltipText = "When enabled, the AI can automatically search Godot documentation to provide accurate answers";
             _agentContainer.AddChild(_useAgentCheckbox);
+
+            // Max Iterations section
+            var iterationsSection = new VBoxContainer();
+            iterationsSection.AddThemeConstantOverride("separation", 4);
+            _agentContainer.AddChild(iterationsSection);
+
+            var iterationsLabel = new Label();
+            iterationsLabel.Text = "Max Agent Iterations:";
+            iterationsSection.AddChild(iterationsLabel);
+
+            var iterationsDesc = new Label();
+            iterationsDesc.Text = "Maximum reasoning and tool-calling loops per request.";
+            iterationsDesc.AddThemeColorOverride("font_color", new Color(0.7f, 0.7f, 0.7f));
+            iterationsDesc.AddThemeFontSizeOverride("font_size", 12);
+            iterationsSection.AddChild(iterationsDesc);
+
+            _maxIterationsInput = new SpinBox();
+            _maxIterationsInput.MinValue = 1;
+            _maxIterationsInput.MaxValue = 100;
+            _maxIterationsInput.Step = 1;
+            _maxIterationsInput.Value = 50;
+            _maxIterationsInput.TooltipText = "Maximum iterations for agent tool-calling loop (1-100)";
+            _maxIterationsInput.CustomMinimumSize = new Vector2(100, 0);
+            iterationsSection.AddChild(_maxIterationsInput);
 
             // Documentation section
             var docsContainer = new VBoxContainer();
@@ -441,6 +466,7 @@ namespace G0
 
             // Agent Tab
             _useAgentCheckbox.ButtonPressed = settings.UseAgent;
+            _maxIterationsInput.Value = settings.MaxAgentIterations;
             _systemPromptInput.Text = settings.SystemPrompt;
             _serperApiKeyInput.Text = settings.SerperApiKey;
 
@@ -458,6 +484,7 @@ namespace G0
                 MaxHistorySize = (int)_maxHistoryInput.Value,
                 SelectedModel = _currentSettings.SelectedModel,
                 UseAgent = _useAgentCheckbox.ButtonPressed,
+                MaxAgentIterations = (int)_maxIterationsInput.Value,
                 SystemPrompt = _systemPromptInput.Text.Trim(),
                 SerperApiKey = _serperApiKeyInput.Text.Trim(),
                 DocumentationIndexed = _currentSettings.DocumentationIndexed,

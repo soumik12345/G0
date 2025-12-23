@@ -54,6 +54,12 @@ namespace G0.Models
         public bool UseAgent { get; set; } = true;
 
         /// <summary>
+        /// Maximum number of iterations the agent can perform when using tools.
+        /// Each iteration includes reasoning, tool calls, and processing tool results.
+        /// </summary>
+        public int MaxAgentIterations { get; set; } = 50;
+
+        /// <summary>
         /// The system prompt for the agent.
         /// </summary>
         public string SystemPrompt { get; set; } = 
@@ -97,6 +103,7 @@ namespace G0.Models
                 Provider = Provider,
                 ModelEndpoint = ModelEndpoint,
                 UseAgent = UseAgent,
+                MaxAgentIterations = MaxAgentIterations,
                 SystemPrompt = SystemPrompt,
                 SerperApiKey = SerperApiKey,
                 DocumentationIndexed = DocumentationIndexed,

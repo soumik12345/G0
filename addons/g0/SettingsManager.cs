@@ -50,6 +50,7 @@ namespace G0
                 Settings.Provider = (ModelProvider)providerInt;
                 Settings.ModelEndpoint = (string)config.GetValue("agent", "endpoint", Settings.ModelEndpoint);
                 Settings.UseAgent = (bool)config.GetValue("agent", "use_agent", Settings.UseAgent);
+                Settings.MaxAgentIterations = (int)config.GetValue("agent", "max_iterations", Settings.MaxAgentIterations);
                 Settings.SystemPrompt = (string)config.GetValue("agent", "system_prompt", Settings.SystemPrompt);
                 Settings.SerperApiKey = (string)config.GetValue("agent", "serper_api_key", Settings.SerperApiKey);
                 Settings.DocumentationIndexed = (bool)config.GetValue("documentation", "indexed", Settings.DocumentationIndexed);
@@ -76,6 +77,7 @@ namespace G0
             config.SetValue("agent", "provider", (int)Settings.Provider);
             config.SetValue("agent", "endpoint", Settings.ModelEndpoint);
             config.SetValue("agent", "use_agent", Settings.UseAgent);
+            config.SetValue("agent", "max_iterations", Settings.MaxAgentIterations);
             config.SetValue("agent", "system_prompt", Settings.SystemPrompt);
             config.SetValue("agent", "serper_api_key", Settings.SerperApiKey);
             config.SetValue("documentation", "indexed", Settings.DocumentationIndexed);
