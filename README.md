@@ -10,153 +10,147 @@ The G0 agent is built with a modular, layered architecture that integrates multi
 
 ```mermaid
 graph TB
-    subgraph "Godot Plugin Layer"
-        G0[g0.cs<br/>EditorPlugin]
-    end
-    
-    subgraph "UI Layer"
-        ChatPanel[ChatPanel<br/>Main Chat Interface]
-        SettingsDialog[SettingsDialog<br/>Configuration UI]
-        MessageRenderer[MessageRenderer<br/>BBCode Formatting]
-        IntermediateStepRenderer[IntermediateStepRenderer<br/>Agent Steps Display]
-    end
-    
     subgraph "Agent Core"
-        AgentClient[AgentClient<br/>Unified AI Agent Client]
-        GeminiAdapter[GeminiChatClientAdapter<br/>Gemini API Wrapper]
-        SettingsManager[SettingsManager<br/>Config & History]
+        AgentClient[AgentClient<br/>Agentic Loop Controller]
+        ChatHistory[Chat History<br/>Conversation Context]
+        AgentStep[Agent Steps<br/>Reasoning Tracker]
     end
     
-    subgraph "Tools System"
-        GodotDocsTool[GodotDocsTool<br/>Documentation Search]
-        SerperWebSearchTool[SerperWebSearchTool<br/>Web Search]
-        ToolRegistry[Microsoft.Extensions.AI<br/>Tool Registry]
+    subgraph "AI Provider Layer"
+        IChatClient[IChatClient Interface<br/>Microsoft.Extensions.AI]
+        GeminiAdapter[GeminiChatClientAdapter]
+        OpenAIClient[OpenAI Client]
+        AzureClient[Azure OpenAI Client]
     end
     
-    subgraph "Documentation System"
-        DocsIndexer[GodotDocsIndexer<br/>Documentation Crawler]
-        DocsIndex[DocumentationIndex<br/>Searchable Index]
-        DocumentationEntry[DocumentationEntry<br/>Indexed Content]
+    subgraph "Tools & Functions"
+        ToolRegistry[AI Function Registry]
+        GodotDocsTool[search_godot_docs<br/>get_godot_class_info<br/>list_godot_doc_topics]
+        SerperTool[search_web]
+        DocsIndex[(Documentation Index<br/>Searchable Knowledge Base)]
     end
     
-    subgraph "Data Models"
-        G0Settings[G0Settings<br/>Configuration Model]
-        ChatMessage[ChatMessage<br/>Message Model]
-        AgentStep[AgentStep<br/>Agent Reasoning Steps]
+    subgraph "External APIs"
+        Gemini[Google Gemini API<br/>gemini-2.5-flash]
+        OpenAI[OpenAI API<br/>gpt-4o]
+        Serper[Serper API<br/>Web Search]
     end
     
-    subgraph "External Services"
-        GeminiAPI[Google Gemini API<br/>gemini-2.5-flash]
-        SerperAPI[Serper API<br/>Web Search Service]
-        GodotDocs[Godot Documentation<br/>docs.godotengine.org]
-    end
+    %% User Input Flow
+    User([User Query]) -->|Message| AgentClient
     
-    %% Plugin to UI
-    G0 -->|Creates & Adds to Dock| ChatPanel
+    %% Agent Loop
+    AgentClient -->|1. Build Context| ChatHistory
+    AgentClient -->|2. Send with Tools| IChatClient
+    IChatClient -->|Delegates to| GeminiAdapter
+    IChatClient -->|Delegates to| OpenAIClient
+    IChatClient -->|Delegates to| AzureClient
     
-    %% UI to Agent
-    ChatPanel -->|User Input| AgentClient
-    ChatPanel -->|Configure| SettingsManager
-    ChatPanel -->|Index Docs| DocsIndexer
-    ChatPanel -->|Display Settings| SettingsDialog
-    ChatPanel -->|Render Messages| MessageRenderer
-    ChatPanel -->|Render Steps| IntermediateStepRenderer
+    %% Provider to External API
+    GeminiAdapter -->|API Request| Gemini
+    OpenAIClient -->|API Request| OpenAI
     
-    %% Agent Core Relationships
-    AgentClient -->|Uses| GeminiAdapter
-    AgentClient -->|Loads Config| SettingsManager
-    AgentClient -->|Registers Tools| ToolRegistry
-    AgentClient -->|Emits Signals| ChatPanel
+    %% Response with Tool Calls
+    Gemini -->|Streaming Response<br/>+ Tool Calls| AgentClient
+    OpenAI -->|Streaming Response<br/>+ Tool Calls| AgentClient
     
-    %% Settings
-    SettingsManager -->|Manages| G0Settings
-    SettingsManager -->|Persists| ChatMessage
-    SettingsDialog -->|Updates| SettingsManager
+    %% Tool Execution Loop
+    AgentClient -->|3. Detect Tool Call| ToolRegistry
+    ToolRegistry -->|Execute| GodotDocsTool
+    ToolRegistry -->|Execute| SerperTool
     
-    %% Tools to Resources
-    GodotDocsTool -->|Searches| DocsIndex
-    ToolRegistry -->|Contains| GodotDocsTool
-    ToolRegistry -->|Contains| SerperWebSearchTool
+    %% Tool Implementation
+    GodotDocsTool -->|Search Query| DocsIndex
+    DocsIndex -->|Results| GodotDocsTool
+    SerperTool -->|HTTP Request| Serper
+    Serper -->|Search Results| SerperTool
     
-    %% Documentation System
-    DocsIndexer -->|Scrapes| GodotDocs
-    DocsIndexer -->|Builds| DocsIndex
-    DocsIndex -->|Contains| DocumentationEntry
-    DocsIndexer -->|Emits Progress| ChatPanel
+    %% Tool Results Back to Agent
+    GodotDocsTool -->|Tool Result| AgentClient
+    SerperTool -->|Tool Result| AgentClient
     
-    %% Agent to Tools
-    AgentClient -->|Invokes| GodotDocsTool
-    AgentClient -->|Invokes| SerperWebSearchTool
+    %% Iteration or Final Response
+    AgentClient -->|4. Add Result to Context| ChatHistory
+    AgentClient -->|5a. Continue Loop<br/>Max 5 Iterations| IChatClient
+    AgentClient -->|5b. Final Response| User
     
-    %% External API Calls
-    GeminiAdapter -->|API Requests| GeminiAPI
-    SerperWebSearchTool -->|Search Requests| SerperAPI
-    
-    %% Data Flow
-    ChatMessage -->|Contains| AgentStep
-    AgentClient -->|Produces| AgentStep
-    ChatPanel -->|Displays| AgentStep
+    %% Step Tracking
+    AgentClient -.->|Track Each Step| AgentStep
+    AgentStep -.->|Iteration Start<br/>Reasoning<br/>Tool Call<br/>Tool Result| User
     
     %% Styling
-    classDef plugin fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#fff
-    classDef ui fill:#50c878,stroke:#2d7a4a,stroke-width:2px,color:#fff
-    classDef agent fill:#9b59b6,stroke:#6c3483,stroke-width:2px,color:#fff
+    classDef agent fill:#9b59b6,stroke:#6c3483,stroke-width:3px,color:#fff
+    classDef provider fill:#3498db,stroke:#1f618d,stroke-width:2px,color:#fff
     classDef tools fill:#e67e22,stroke:#a05a1a,stroke-width:2px,color:#fff
-    classDef docs fill:#3498db,stroke:#1f618d,stroke-width:2px,color:#fff
-    classDef models fill:#95a5a6,stroke:#5d6d7e,stroke-width:2px,color:#fff
     classDef external fill:#e74c3c,stroke:#922b21,stroke-width:2px,color:#fff
+    classDef data fill:#95a5a6,stroke:#5d6d7e,stroke-width:2px,color:#fff
+    classDef user fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
     
-    class G0 plugin
-    class ChatPanel,SettingsDialog,MessageRenderer,IntermediateStepRenderer ui
-    class AgentClient,GeminiAdapter,SettingsManager agent
-    class GodotDocsTool,SerperWebSearchTool,ToolRegistry tools
-    class DocsIndexer,DocsIndex,DocumentationEntry docs
-    class G0Settings,ChatMessage,AgentStep models
-    class GeminiAPI,SerperAPI,GodotDocs external
+    class AgentClient,ChatHistory,AgentStep agent
+    class IChatClient,GeminiAdapter,OpenAIClient,AzureClient provider
+    class ToolRegistry,GodotDocsTool,SerperTool,DocsIndex tools
+    class Gemini,OpenAI,Serper external
+    class User user
 ```
 
-### Architecture Overview
+### Agent Architecture
 
-#### 1. **Plugin Layer**
-- **g0.cs**: Main Godot EditorPlugin that initializes the chat panel and integrates with the Godot editor
+The G0 agent implements an **agentic loop** with autonomous tool calling, supporting up to 5 iterations of reasoning and tool execution before generating a final response.
 
-#### 2. **UI Layer**
-- **ChatPanel**: Primary user interface for chat interactions, manages message display and user input
-- **SettingsDialog**: Configuration interface for API keys, models, and agent settings
-- **MessageRenderer**: Converts markdown and formats messages with BBCode for display in Godot's RichTextLabel
-- **IntermediateStepRenderer**: Displays agent reasoning steps and tool calls with expandable sections
+#### **Agent Core**
+- **AgentClient**: Main orchestrator implementing the agentic loop
+  - Manages conversation context and chat history
+  - Controls streaming responses with real-time token delivery
+  - Handles tool call detection and execution
+  - Tracks reasoning steps for transparency
+  - Supports cancellation and error recovery
 
-#### 3. **Agent Core**
-- **AgentClient**: Unified AI agent client supporting multiple providers (Gemini, OpenAI, Azure OpenAI) with tool-calling capabilities
-- **GeminiChatClientAdapter**: Wraps Google's Gemini API to work with Microsoft.Extensions.AI interface
-- **SettingsManager**: Manages configuration persistence and chat history
+#### **AI Provider Layer**
+- **Multi-Provider Support**: Flexible architecture using `Microsoft.Extensions.AI.IChatClient` interface
+  - **GeminiChatClientAdapter**: Google Gemini (primary, with streaming)
+  - **OpenAI Client**: GPT-4o and other OpenAI models
+  - **Azure OpenAI Client**: Enterprise Azure-hosted models
+- Provider selection configured via `G0Settings.Provider`
 
-#### 4. **Tools System**
-- **GodotDocsTool**: Provides AI agent with search capabilities across indexed Godot documentation
-- **SerperWebSearchTool**: Enables web search for current information and external resources
-- **Microsoft.Extensions.AI**: Framework for tool registration and function calling
+#### **Agentic Loop Flow**
+1. **Context Building**: Combines system prompt + chat history + user query
+2. **LLM Request**: Sends context with registered tools to AI provider
+3. **Response Analysis**: Detects tool calls in streaming response
+4. **Tool Execution**: Invokes requested tools and collects results
+5. **Iteration**: Adds tool results to context and continues (max 5 iterations)
+6. **Final Response**: Returns answer when no more tool calls are needed
 
-#### 5. **Documentation System**
-- **GodotDocsIndexer**: Scrapes and indexes Godot documentation from docs.godotengine.org
-- **DocumentationIndex**: In-memory searchable index with keyword-based retrieval
-- **DocumentationEntry**: Represents individual documentation sections with metadata and code examples
+#### **Tools & Functions**
+Built using `Microsoft.Extensions.AI` function calling framework:
 
-#### 6. **Data Models**
-- **G0Settings**: Configuration model for API keys, model selection, and agent behavior
-- **ChatMessage**: Message model with role, content, and agent steps
-- **AgentStep**: Tracks individual reasoning steps, tool calls, and results in the agent loop
+**GodotDocsTool** - Local documentation search:
+- `search_godot_docs(query, maxResults)`: Semantic search across documentation
+- `get_godot_class_info(className)`: Detailed class information
+- `list_godot_doc_topics()`: Available documentation categories
 
-#### 7. **External Services**
-- **Google Gemini API**: Primary LLM provider for chat completions and streaming
-- **Serper API**: Google search API for web search capabilities
-- **Godot Documentation**: Official Godot Engine documentation source
+**SerperWebSearchTool** - Web search:
+- `search_web(query, numResults)`: Google search via Serper API
 
-### Key Features
+**Documentation Index**:
+- Pre-indexed Godot documentation (classes, tutorials, best practices)
+- Keyword-based search with code examples
+- Stored locally in `user://godot_docs_index.json`
 
-1. **Multi-Provider Support**: Flexible architecture supporting Gemini, OpenAI, and Azure OpenAI
-2. **Agentic Tool Calling**: Autonomous tool selection and execution with up to 5 iterations
-3. **Streaming Responses**: Real-time token streaming for responsive user experience
-4. **Documentation Integration**: Local documentation index for fast, offline-capable searches
-5. **Web Search**: External information retrieval for current events and external libraries
-6. **Agent Step Visualization**: Transparent display of reasoning process and tool usage
-7. **Persistent History**: Chat history and settings stored in Godot's user:// directory
+#### **Step Tracking**
+Every agent action is recorded as an `AgentStep`:
+- **IterationStart**: Beginning of each reasoning cycle
+- **Reasoning**: Agent's thought process (streamed in real-time)
+- **ToolCall**: Tool invocation with arguments
+- **ToolResult**: Tool execution results
+
+This provides full transparency into the agent's decision-making process.
+
+### Key Agent Capabilities
+
+1. **Autonomous Decision Making**: Agent independently decides when and which tools to use based on user queries
+2. **Multi-Iteration Reasoning**: Up to 5 reasoning cycles to solve complex problems requiring multiple tool calls
+3. **Streaming Transparency**: Real-time visibility into agent's reasoning, tool calls, and results as they happen
+4. **Context-Aware**: Maintains full conversation history and accumulates tool results for informed decision-making
+5. **Godot-Specialized**: Pre-trained on Godot documentation with semantic search across classes, tutorials, and best practices
+6. **Web-Connected**: Can search the internet for current information, external libraries, and community resources
+7. **Error Resilient**: Handles tool failures gracefully, continuing the agentic loop or providing informative errors
