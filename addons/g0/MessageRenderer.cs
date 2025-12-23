@@ -191,6 +191,10 @@ namespace G0
             // Strikethrough: ~~text~~
             result = Regex.Replace(result, @"~~(.+?)~~", "[s]$1[/s]");
 
+            // File references: @filepath - render with distinctive styling
+            result = Regex.Replace(result, @"@(?:""([^""]+)""|([^\s,;:!?\[\](){}]+\.[a-zA-Z0-9]+))", 
+                match => RenderFileReference(match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value));
+
             return result;
         }
 
@@ -406,6 +410,48 @@ namespace G0
             }
             
             return text.Substring(0, maxLength) + "...";
+        }
+
+        /// <summary>
+        /// Renders a file reference with distinctive styling.
+        /// </summary>
+        /// <param name="filePath">The file path (without the @ prefix).</param>
+        /// <returns>BBCode formatted file reference.</returns>
+        public static string RenderFileReference(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath))
+            {
+                return "@";
+            }
+
+            // Use a distinctive blue color for file references
+            return $"[color=#58A6FF]📄 @{EscapeBBCode(filePath)}[/color]";
+        }
+
+        /// <summary>
+        /// Renders an attached files summary.
+        /// </summary>
+        /// <param name="fileCount">Number of attached files.</param>
+        /// <param name="successCount">Number of successfully read files.</param>
+        /// <returns>BBCode formatted attachment summary.</returns>
+        public static string RenderAttachmentSummary(int fileCount, int successCount)
+        {
+            if (fileCount == 0)
+            {
+                return "";
+            }
+
+            var color = successCount == fileCount ? "#58A6FF" : "#F59E0B";
+            var icon = successCount == fileCount ? "📎" : "⚠️";
+            
+            if (successCount == fileCount)
+            {
+                return $"[color={color}]{icon} {fileCount} file{(fileCount == 1 ? "" : "s")} attached[/color]";
+            }
+            else
+            {
+                return $"[color={color}]{icon} {successCount}/{fileCount} files attached[/color]";
+            }
         }
     }
 }

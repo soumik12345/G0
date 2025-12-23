@@ -100,13 +100,20 @@ namespace G0
                         }
                     }
 
+                    // Add Read File tool for reading project files
+                    var projectRoot = ProjectSettings.GlobalizePath("res://");
+                    foreach (AITool tool in ReadFileTool.CreateAIFunctions(projectRoot))
+                    {
+                        _tools.Add(tool);
+                    }
+
                     if (_tools.Count > 0)
                     {
                         GD.Print($"G0: Agent configured with {_tools.Count} tools");
                     }
                     else
                     {
-                        GD.Print("G0: Agent mode enabled but no tools configured (missing documentation and/or Serper API key)");
+                        GD.Print("G0: Agent mode enabled but no tools configured");
                     }
                 }
                 else
@@ -235,7 +242,9 @@ namespace G0
                 foreach (var msg in messages)
                 {
                     var role = msg.Role == "user" ? ChatRole.User : ChatRole.Assistant;
-                    chatMessages.Add(new AIChatMessage(role, msg.Content));
+                    // For user messages with attached files, include file contents in context
+                    var content = msg.Role == "user" ? msg.GetContentWithFileContext() : msg.Content;
+                    chatMessages.Add(new AIChatMessage(role, content));
                 }
 
                 // Create chat options with tools if available

@@ -26,6 +26,7 @@ namespace G0
         private Label _statusLabel;
         private Button _sendButton;
         private PopupMenu _contextMenu;
+        private FileAutocompletePopup _fileAutocompletePopup;
 
         // Components
         private SettingsManager _settingsManager;
@@ -37,6 +38,8 @@ namespace G0
         private bool _isStreaming;
         private string _currentStreamingContent;
         private RichTextLabel _selectedMessageLabel;
+        private int _autocompleteStartPosition = -1;
+        private string _previousInputText = "";
 
         public override void _Ready()
         {
@@ -76,6 +79,9 @@ namespace G0
 
             // Configure agent client with documentation
             ConfigureAgentClient();
+            
+            // Initialize file discovery
+            FileDiscovery.Instance.RefreshFileCache();
         }
         
         private void ConfigureAgentClient()
@@ -109,6 +115,17 @@ namespace G0
             _settingsDialog.SettingsReset += OnSettingsReset;
             _settingsDialog.DownloadDocumentationRequested += OnDownloadDocumentationRequested;
             AddChild(_settingsDialog);
+            
+            // File autocomplete popup
+            BuildFileAutocompletePopup();
+        }
+        
+        private void BuildFileAutocompletePopup()
+        {
+            _fileAutocompletePopup = new FileAutocompletePopup();
+            _fileAutocompletePopup.FileSelected += OnFileSelected;
+            _fileAutocompletePopup.Cancelled += OnAutocompleteCancelled;
+            AddChild(_fileAutocompletePopup);
         }
         
         private void OnDownloadDocumentationRequested()
@@ -176,7 +193,7 @@ namespace G0
 
             // Text input
             _inputField = new TextEdit();
-            _inputField.PlaceholderText = "Type your message... (Ctrl+Enter to send)";
+            _inputField.PlaceholderText = "Type your message... (@ to reference files, Ctrl+Enter to send)";
             _inputField.CustomMinimumSize = new Vector2(0, 80);
             _inputField.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             _inputField.WrapMode = TextEdit.LineWrappingMode.Boundary;
@@ -233,19 +250,24 @@ namespace G0
         {
             foreach (var message in _settingsManager.ChatHistory)
             {
-                AddMessageToUI(message.Role, message.Content, false);
+                AddMessageToUI(message, false);
             }
             ScrollToBottom();
         }
 
         private void AddMessageToUI(string role, string content, bool save = true)
         {
+            AddMessageToUI(new ChatMessage(role, content), save);
+        }
+
+        private void AddMessageToUI(ChatMessage message, bool save = true)
+        {
             var messageContainer = new PanelContainer();
             messageContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
             // Style based on role
             var styleBox = new StyleBoxFlat();
-            if (role == "user")
+            if (message.Role == "user")
             {
                 styleBox.BgColor = new Color(0.15f, 0.25f, 0.35f, 0.8f);
             }
@@ -269,12 +291,22 @@ namespace G0
 
             // Role label
             var roleLabel = new Label();
-            roleLabel.Text = role == "user" ? "You" : "Assistant";
-            roleLabel.AddThemeColorOverride("font_color", role == "user" 
+            roleLabel.Text = message.Role == "user" ? "You" : "Assistant";
+            roleLabel.AddThemeColorOverride("font_color", message.Role == "user" 
                 ? new Color(0.4f, 0.7f, 1.0f) 
                 : new Color(0.6f, 0.8f, 0.6f));
             roleLabel.AddThemeFontSizeOverride("font_size", 12);
             vbox.AddChild(roleLabel);
+            
+            // Attached files indicator (if any)
+            if (message.HasAttachedFiles)
+            {
+                var attachmentLabel = new Label();
+                attachmentLabel.Text = message.GetAttachmentsSummary();
+                attachmentLabel.AddThemeColorOverride("font_color", new Color(0.55f, 0.75f, 0.95f));
+                attachmentLabel.AddThemeFontSizeOverride("font_size", 11);
+                vbox.AddChild(attachmentLabel);
+            }
 
             // Message content
             var contentLabel = new RichTextLabel();
@@ -286,15 +318,15 @@ namespace G0
             contentLabel.CustomMinimumSize = new Vector2(0, 20);
             // Clear and append text to ensure BBCode is parsed
             contentLabel.Clear();
-            contentLabel.AppendText(MessageRenderer.RenderMessage(content));
-            contentLabel.GuiInput += (InputEvent @event) => OnMessageGuiInput(@event, contentLabel, content);
+            contentLabel.AppendText(MessageRenderer.RenderMessage(message.Content));
+            contentLabel.GuiInput += (InputEvent @event) => OnMessageGuiInput(@event, contentLabel, message.Content);
             vbox.AddChild(contentLabel);
 
             _messagesContainer.AddChild(messageContainer);
 
             if (save)
             {
-                _settingsManager.AddMessage(new ChatMessage(role, content));
+                _settingsManager.AddMessage(message);
             }
         }
 
@@ -402,8 +434,115 @@ namespace G0
 
         private void OnInputTextChanged()
         {
-            var charCount = _inputField.Text.Length;
+            var text = _inputField.Text;
+            var charCount = text.Length;
             _charCountLabel.Text = $"{charCount} chars";
+            
+            // Check for '@' character to trigger autocomplete
+            CheckForAutocomplete(text);
+            
+            _previousInputText = text;
+        }
+        
+        private void CheckForAutocomplete(string text)
+        {
+            if (_fileAutocompletePopup.Visible)
+            {
+                // Popup is already visible, update the query
+                if (_autocompleteStartPosition >= 0 && _autocompleteStartPosition < text.Length)
+                {
+                    var caretColumn = _inputField.GetCaretColumn();
+                    if (caretColumn > _autocompleteStartPosition)
+                    {
+                        var query = text.Substring(_autocompleteStartPosition + 1, caretColumn - _autocompleteStartPosition - 1);
+                        // Don't include any text after the cursor
+                        _fileAutocompletePopup.ShowWithQuery(query);
+                    }
+                    else
+                    {
+                        // Cursor moved before the '@', close autocomplete
+                        _fileAutocompletePopup.Hide();
+                        _autocompleteStartPosition = -1;
+                    }
+                }
+                return;
+            }
+            
+            // Check if '@' was just typed
+            var caretCol = _inputField.GetCaretColumn();
+            if (caretCol > 0 && text.Length > 0)
+            {
+                var charBeforeCaret = text[caretCol - 1];
+                var previousLength = _previousInputText.Length;
+                
+                // Check if '@' was just typed (text grew by 1 and the new char is '@')
+                if (text.Length == previousLength + 1 && charBeforeCaret == '@')
+                {
+                    // Check if it's the start of a file reference (not part of an email, etc.)
+                    bool shouldTrigger = caretCol == 1 || char.IsWhiteSpace(text[caretCol - 2]);
+                    
+                    if (shouldTrigger)
+                    {
+                        ShowAutocomplete(caretCol - 1);
+                    }
+                }
+            }
+        }
+        
+        private void ShowAutocomplete(int startPosition)
+        {
+            _autocompleteStartPosition = startPosition;
+            
+            // Calculate popup position relative to the parent window
+            // Get the input field's position in the viewport
+            var inputGlobalPos = _inputField.GetGlobalTransformWithCanvas().Origin;
+            
+            // Get the window this control is in
+            var parentWindow = GetWindow();
+            if (parentWindow != null)
+            {
+                // Calculate position: parent window position + input field position in window - popup height
+                var popupHeight = 310;
+                var popupPosition = new Vector2I(
+                    (int)(parentWindow.Position.X + inputGlobalPos.X),
+                    (int)(parentWindow.Position.Y + inputGlobalPos.Y - popupHeight)
+                );
+                
+                _fileAutocompletePopup.Position = popupPosition;
+            }
+            
+            _fileAutocompletePopup.ShowWithQuery("");
+        }
+        
+        private void OnFileSelected(string filePath)
+        {
+            if (_autocompleteStartPosition < 0)
+            {
+                return;
+            }
+            
+            var text = _inputField.Text;
+            var caretColumn = _inputField.GetCaretColumn();
+            
+            // Replace from '@' to current cursor position with the selected file
+            var beforeAt = text.Substring(0, _autocompleteStartPosition);
+            var afterCursor = caretColumn < text.Length ? text.Substring(caretColumn) : "";
+            
+            var newText = $"{beforeAt}@{filePath}{afterCursor}";
+            _inputField.Text = newText;
+            
+            // Position cursor after the inserted file path
+            var newCaretPosition = _autocompleteStartPosition + 1 + filePath.Length;
+            _inputField.SetCaretColumn(newCaretPosition);
+            
+            _autocompleteStartPosition = -1;
+            _inputField.GrabFocus();
+        }
+        
+        private void OnAutocompleteCancelled()
+        {
+            _autocompleteStartPosition = -1;
+            _inputField.GrabFocus();
         }
 
         private void OnInputGuiInput(InputEvent @event)
@@ -415,6 +554,12 @@ namespace G0
                     OnSendPressed();
                     GetViewport().SetInputAsHandled();
                 }
+                else if (keyEvent.Keycode == Key.Escape && _fileAutocompletePopup.Visible)
+                {
+                    _fileAutocompletePopup.Hide();
+                    _autocompleteStartPosition = -1;
+                    GetViewport().SetInputAsHandled();
+                }
             }
         }
 
@@ -422,8 +567,8 @@ namespace G0
         {
             GD.Print($"G0: OnSendPressed called, _isStreaming={_isStreaming}");
             
-            var message = _inputField.Text.Trim();
-            if (string.IsNullOrEmpty(message))
+            var messageText = _inputField.Text.Trim();
+            if (string.IsNullOrEmpty(messageText))
             {
                 GD.Print("G0: Message is empty, returning");
                 return;
@@ -441,13 +586,37 @@ namespace G0
                 AddErrorMessage("API key is not configured. Please set it in settings.");
                 return;
             }
+            
+            // Hide autocomplete if visible
+            if (_fileAutocompletePopup.Visible)
+            {
+                _fileAutocompletePopup.Hide();
+                _autocompleteStartPosition = -1;
+            }
 
             // Clear input
             _inputField.Text = "";
             OnInputTextChanged();
+            
+            // Parse file references from the message
+            var fileReferences = FileReference.ParseFileReferences(messageText);
+            
+            // Read file contents
+            var projectRoot = FileDiscovery.Instance.ProjectRoot;
+            foreach (var fileRef in fileReferences)
+            {
+                fileRef.ReadFileContent(projectRoot);
+                if (!fileRef.Exists || !string.IsNullOrEmpty(fileRef.ErrorMessage))
+                {
+                    GD.Print($"G0: File reference warning: {fileRef.ErrorMessage}");
+                }
+            }
+            
+            // Create the chat message with attachments
+            var chatMessage = new ChatMessage("user", messageText, fileReferences);
 
-            // Add user message
-            AddMessageToUI("user", message, true);
+            // Add user message to UI
+            AddMessageToUI(chatMessage, true);
             ScrollToBottom();
 
             // Start streaming
@@ -853,6 +1022,12 @@ namespace G0
                 _settingsDialog.SettingsReset -= OnSettingsReset;
                 _settingsDialog.DownloadDocumentationRequested -= OnDownloadDocumentationRequested;
             }
+            
+            if (_fileAutocompletePopup != null)
+            {
+                _fileAutocompletePopup.FileSelected -= OnFileSelected;
+                _fileAutocompletePopup.Cancelled -= OnAutocompleteCancelled;
+            }
         }
         
         /// <summary>
@@ -880,4 +1055,3 @@ namespace G0
     }
 }
 #endif
-
