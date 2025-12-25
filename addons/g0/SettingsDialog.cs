@@ -143,7 +143,7 @@ namespace G0
             modelsContainer.AddChild(modelsLabel);
 
             _modelsInput = new TextEdit();
-            _modelsInput.PlaceholderText = "gemini-2.5-flash\ngemini-2.0-flash";
+            _modelsInput.PlaceholderText = "gemini-2.5-flash\ngemini-2.5-pro\ngemini-2.5-flash-lite\ngemini-2.0-flash\ngemini-3-pro-preview\ngemini-flash-latest\ngemini-flash-lite-latest\ngemini-1.5-pro";
             _modelsInput.TooltipText = "List of available models, one per line";
             _modelsInput.CustomMinimumSize = new Vector2(0, 80);
             _modelsInput.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -364,7 +364,7 @@ namespace G0
                 case ModelProvider.Gemini:
                 default:
                     _apiKeyInput.PlaceholderText = "AIza...";
-                    _modelsInput.PlaceholderText = "gemini-2.5-flash\ngemini-2.0-flash\ngemini-1.5-pro";
+                    _modelsInput.PlaceholderText = "gemini-2.5-flash\ngemini-2.5-pro\ngemini-2.5-flash-lite\ngemini-2.0-flash\ngemini-3-pro-preview\ngemini-flash-latest\ngemini-flash-lite-latest\ngemini-1.5-pro";
                     break;
             }
         }

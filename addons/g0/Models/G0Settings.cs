@@ -52,7 +52,12 @@ namespace G0.Models
         public List<string> AvailableModels { get; set; } = new List<string>
         {
             "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash-lite",
             "gemini-2.0-flash",
+            "gemini-3-pro-preview",
+            "gemini-flash-latest",
+            "gemini-flash-lite-latest",
             "gemini-1.5-pro"
         };
 
@@ -182,7 +187,12 @@ namespace G0.Models
                 _ => new List<string>
                 {
                     "gemini-2.5-flash",
+                    "gemini-2.5-pro",
+                    "gemini-2.5-flash-lite",
                     "gemini-2.0-flash",
+                    "gemini-3-pro-preview",
+                    "gemini-flash-latest",
+                    "gemini-flash-lite-latest",
                     "gemini-1.5-pro"
                 }
             };

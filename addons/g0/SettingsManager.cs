@@ -37,11 +37,26 @@ namespace G0
                     var arr = modelsArray.AsGodotArray();
                     if (arr.Count > 0)
                     {
-                        Settings.AvailableModels.Clear();
+                        // Load saved models
+                        var savedModels = new List<string>();
                         foreach (var model in arr)
                         {
-                            Settings.AvailableModels.Add(model.AsString());
+                            savedModels.Add(model.AsString());
                         }
+                        
+                        // Merge with default models to ensure new models are available
+                        // Default models from G0Settings will be added if not already present
+                        var defaultSettings = new G0Settings();
+                        var mergedModels = new List<string>(savedModels);
+                        foreach (var defaultModel in defaultSettings.AvailableModels)
+                        {
+                            if (!mergedModels.Contains(defaultModel))
+                            {
+                                mergedModels.Add(defaultModel);
+                            }
+                        }
+                        
+                        Settings.AvailableModels = mergedModels;
                     }
                 }
 
