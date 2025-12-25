@@ -150,3 +150,32 @@ This provides full transparency into the agent's decision-making process.
 5. **Godot-Specialized**: Pre-trained on Godot documentation with semantic search across classes, tutorials, and best practices
 6. **Web-Connected**: Can search the internet for current information, external libraries, and community resources
 7. **Error Resilient**: Handles tool failures gracefully, continuing the agentic loop or providing informative errors
+
+## Documentation
+
+Full API documentation is available at: **[https://yourusername.github.io/g-0](https://yourusername.github.io/g-0)** *(Update this URL to match your GitHub username)*
+
+The documentation is automatically generated from XML comments using DocFX and includes:
+- Complete API reference for all classes and methods
+- Architecture overview and design patterns
+- Usage examples and best practices
+
+### Building Documentation Locally
+
+To build and preview the documentation locally:
+
+```bash
+# Install DocFX
+dotnet tool install -g docfx
+
+# Build the project to generate XML documentation
+dotnet build G0.csproj --configuration Release
+
+# Build documentation
+docfx docfx.json
+
+# Serve documentation locally
+docfx serve _site
+```
+
+The documentation will be available at `http://localhost:8080`.

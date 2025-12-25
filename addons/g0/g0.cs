@@ -2,11 +2,21 @@
 using Godot;
 using System;
 
+/// <summary>
+/// Main entry point for the G0 AI Assistant plugin.
+/// This EditorPlugin class manages the lifecycle of the AI chat interface in Godot Editor.
+/// </summary>
 [Tool]
 public partial class g0 : EditorPlugin
 {
+    /// <summary>
+    /// The main chat panel instance that provides the AI assistant interface.
+    /// </summary>
     private G0.ChatPanel _chatPanel;
 
+    /// <summary>
+    /// Called when the plugin is enabled. Sets up the chat panel in Godot's dock.
+    /// </summary>
     public override void _EnterTree()
     {
         // Create the chat panel
@@ -19,6 +29,9 @@ public partial class g0 : EditorPlugin
         GD.Print("G0: AI Chat Panel loaded");
     }
 
+    /// <summary>
+    /// Called when the plugin is disabled. Cleans up the chat panel and resources.
+    /// </summary>
     public override void _ExitTree()
     {
         // Clean up the panel

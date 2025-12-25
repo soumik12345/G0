@@ -7,6 +7,10 @@ using G0.Documentation;
 
 namespace G0
 {
+    /// <summary>
+    /// Main chat interface panel that appears in Godot's dock.
+    /// Provides the AI assistant chat functionality with streaming responses and tool visualization.
+    /// </summary>
     [Tool]
     public partial class ChatPanel : Control
     {

@@ -1,0 +1,63 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "files": ["**/*.cs"],
+          "exclude": ["**/bin/**", "**/obj/**", "**/Binaries/**"],
+          "src": "."
+        }
+      ],
+      "dest": "api",
+      "includePrivateMembers": false,
+      "disableGitFeatures": false,
+      "disableDefaultFilter": false,
+      "noRestore": false,
+      "namespaceLayout": "flattened",
+      "memberLayout": "separatePages",
+      "allowCompilationErrors": false
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": ["api/**.yml", "api/index.md"]
+      },
+      {
+        "files": ["**.md", "toc.yml"],
+        "exclude": ["**/bin/**", "**/obj/**"]
+      }
+    ],
+    "resource": [
+      {
+        "files": ["images/**"]
+      }
+    ],
+    "output": "_site",
+    "template": [
+      "default",
+      "modern"
+    ],
+    "postProcessors": ["ExtractSearchIndex"],
+    "globalMetadata": {
+      "_appName": "G0 - AI Assistant for Godot",
+      "_appTitle": "G0 Documentation",
+      "_appFooter": "G0 AI Assistant Plugin for Godot Editor",
+      "_enableSearch": true,
+      "_enableNewTab": true,
+      "_disableContribution": false,
+      "_gitContribute": {
+        "repo": "https://github.com/yourusername/g-0",
+        "branch": "main"
+      }
+    },
+    "fileMetadata": {
+      "_appTitle": {
+        "api/**.md": "G0 API Reference"
+      }
+    },
+    "sitemap": {
+      "baseUrl": "https://yourusername.github.io/g-0"
+    }
+  }
+}

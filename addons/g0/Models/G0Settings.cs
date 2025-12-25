@@ -24,12 +24,31 @@ namespace G0.Models
         AzureOpenAI
     }
 
+    /// <summary>
+    /// Configuration settings for the G0 AI Assistant plugin.
+    /// Manages API keys, model selection, agent behavior, and various integration settings.
+    /// </summary>
     public class G0Settings
     {
         // API Configuration
+        /// <summary>
+        /// API key for the selected AI provider.
+        /// </summary>
         public string ApiKey { get; set; } = "";
+
+        /// <summary>
+        /// Currently selected AI model name.
+        /// </summary>
         public string SelectedModel { get; set; } = "gemini-2.5-flash";
+
+        /// <summary>
+        /// Maximum number of chat messages to keep in conversation history.
+        /// </summary>
         public int MaxHistorySize { get; set; } = 100;
+
+        /// <summary>
+        /// List of available model names for the current provider.
+        /// </summary>
         public List<string> AvailableModels { get; set; } = new List<string>
         {
             "gemini-2.5-flash",
@@ -38,6 +57,9 @@ namespace G0.Models
         };
 
         // Model Provider Configuration
+        /// <summary>
+        /// The AI provider to use for chat completions.
+        /// </summary>
         public ModelProvider Provider { get; set; } = ModelProvider.Gemini;
 
         /// <summary>
@@ -108,8 +130,15 @@ namespace G0.Models
         /// </summary>
         public string LastDocumentationUpdate { get; set; } = "";
 
+        /// <summary>
+        /// Initializes a new instance of G0Settings with default values.
+        /// </summary>
         public G0Settings() { }
 
+        /// <summary>
+        /// Creates a deep copy of this settings instance.
+        /// </summary>
+        /// <returns>A new G0Settings instance with copied values.</returns>
         public G0Settings Clone()
         {
             return new G0Settings
@@ -132,6 +161,7 @@ namespace G0.Models
         /// <summary>
         /// Gets the available models based on the current provider.
         /// </summary>
+        /// <returns>A list of model names available for the current provider.</returns>
         public List<string> GetModelsForProvider()
         {
             return Provider switch
