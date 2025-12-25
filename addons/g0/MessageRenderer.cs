@@ -453,6 +453,87 @@ namespace G0
                 return $"[color={color}]{icon} {successCount}/{fileCount} files attached[/color]";
             }
         }
+
+        /// <summary>
+        /// Renders a code snippet summary for display in chat history.
+        /// </summary>
+        /// <param name="snippet">The code snippet to render.</param>
+        /// <returns>BBCode formatted snippet display.</returns>
+        public static string RenderCodeSnippet(G0.Models.CodeSnippet snippet)
+        {
+            if (snippet == null)
+            {
+                return "";
+            }
+
+            var displaySummary = snippet.GetDisplaySummary();
+            var languageColor = GetLanguageColor(snippet.Language);
+            
+            return $"[color={languageColor}]✂️ {EscapeBBCode(displaySummary)}[/color]";
+        }
+
+        /// <summary>
+        /// Renders a code snippet with its full content for display.
+        /// </summary>
+        /// <param name="snippet">The code snippet to render.</param>
+        /// <returns>BBCode formatted snippet with code.</returns>
+        public static string RenderCodeSnippetWithContent(G0.Models.CodeSnippet snippet)
+        {
+            if (snippet == null)
+            {
+                return "";
+            }
+
+            var sb = new StringBuilder();
+            var languageColor = GetLanguageColor(snippet.Language);
+            
+            // Header with file info
+            sb.Append($"[color={languageColor}]✂️ {EscapeBBCode(snippet.FilePath)}");
+            sb.Append($" (lines {snippet.StartLine}-{snippet.EndLine})[/color]\n");
+            
+            // Code content
+            if (!string.IsNullOrEmpty(snippet.Content))
+            {
+                var highlightedCode = HighlightCode(snippet.Content, snippet.Language);
+                sb.Append($"[bgcolor=#1E1E1E][code]{highlightedCode}[/code][/bgcolor]");
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Renders a summary of attached snippets.
+        /// </summary>
+        /// <param name="snippetCount">Number of attached snippets.</param>
+        /// <returns>BBCode formatted snippet summary.</returns>
+        public static string RenderSnippetSummary(int snippetCount)
+        {
+            if (snippetCount == 0)
+            {
+                return "";
+            }
+
+            return $"[color=#A78BFA]✂️ {snippetCount} snippet{(snippetCount == 1 ? "" : "s")} attached[/color]";
+        }
+
+        /// <summary>
+        /// Gets a color based on the programming language.
+        /// </summary>
+        private static string GetLanguageColor(string language)
+        {
+            return (language?.ToLowerInvariant()) switch
+            {
+                "csharp" or "cs" => "#61AFEF",      // C# blue
+                "gdscript" or "gd" => "#4A90C8",    // GDScript blue
+                "python" or "py" => "#F0C840",      // Python yellow
+                "javascript" or "js" => "#F0DB4F", // JS yellow
+                "typescript" or "ts" => "#3178C6", // TS blue
+                "rust" or "rs" => "#DE6A2E",        // Rust orange
+                "go" => "#00ADD8",                  // Go cyan
+                "java" => "#F07830",                // Java orange
+                _ => "#A78BFA"                      // Default purple
+            };
+        }
     }
 }
 #endif

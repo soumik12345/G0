@@ -38,6 +38,10 @@ namespace G0
         private GodotDocsIndexer _docsIndexer;
         private SettingsDialog _settingsDialog;
 
+        // Snippet management
+        private HFlowContainer _snippetsContainer;
+        private List<CodeSnippet> _pendingSnippets = new List<CodeSnippet>();
+
         // State
         private bool _isStreaming;
         private string _currentStreamingContent;
@@ -195,9 +199,12 @@ namespace G0
             _statusLabel.Visible = false;
             _inputContainer.AddChild(_statusLabel);
 
+            // Snippets container (for displaying pending code snippets)
+            BuildSnippetsContainer();
+
             // Text input
             _inputField = new TextEdit();
-            _inputField.PlaceholderText = "Type your message... (@ to reference files, Ctrl+Enter to send)";
+            _inputField.PlaceholderText = "Type your message... (@ to reference files, Ctrl+Shift+G for snippets, Ctrl+Enter to send)";
             _inputField.CustomMinimumSize = new Vector2(0, 80);
             _inputField.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             _inputField.WrapMode = TextEdit.LineWrappingMode.Boundary;
@@ -222,6 +229,16 @@ namespace G0
             _sendButton.Text = "Send";
             _sendButton.Pressed += OnSendPressed;
             _inputToolbar.AddChild(_sendButton);
+        }
+
+        private void BuildSnippetsContainer()
+        {
+            _snippetsContainer = new HFlowContainer();
+            _snippetsContainer.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            _snippetsContainer.AddThemeConstantOverride("h_separation", 6);
+            _snippetsContainer.AddThemeConstantOverride("v_separation", 4);
+            _snippetsContainer.Visible = false; // Hidden until snippets are added
+            _inputContainer.AddChild(_snippetsContainer);
         }
 
         private void BuildContextMenu()
@@ -302,8 +319,8 @@ namespace G0
             roleLabel.AddThemeFontSizeOverride("font_size", 12);
             vbox.AddChild(roleLabel);
             
-            // Attached files indicator (if any)
-            if (message.HasAttachedFiles)
+            // Attached files and snippets indicator (if any)
+            if (message.HasAttachments)
             {
                 var attachmentLabel = new Label();
                 attachmentLabel.Text = message.GetAttachmentsSummary();
@@ -572,9 +589,9 @@ namespace G0
             GD.Print($"G0: OnSendPressed called, _isStreaming={_isStreaming}");
             
             var messageText = _inputField.Text.Trim();
-            if (string.IsNullOrEmpty(messageText))
+            if (string.IsNullOrEmpty(messageText) && _pendingSnippets.Count == 0)
             {
-                GD.Print("G0: Message is empty, returning");
+                GD.Print("G0: Message is empty and no snippets, returning");
                 return;
             }
             
@@ -616,8 +633,12 @@ namespace G0
                 }
             }
             
-            // Create the chat message with attachments
-            var chatMessage = new ChatMessage("user", messageText, fileReferences);
+            // Collect pending snippets
+            var snippets = new List<CodeSnippet>(_pendingSnippets);
+            ClearPendingSnippets();
+            
+            // Create the chat message with attachments and snippets
+            var chatMessage = new ChatMessage("user", messageText, fileReferences, snippets);
 
             // Add user message to UI
             AddMessageToUI(chatMessage, true);
@@ -1056,6 +1077,77 @@ namespace G0
         /// Gets the documentation indexer for use by the settings dialog.
         /// </summary>
         public GodotDocsIndexer DocsIndexer => _docsIndexer;
+
+        /// <summary>
+        /// Adds a code snippet to the pending snippets list.
+        /// Called by the plugin when user selects code from the script editor.
+        /// </summary>
+        /// <param name="snippet">The code snippet to add.</param>
+        public void AddSnippet(CodeSnippet snippet)
+        {
+            if (snippet == null)
+            {
+                return;
+            }
+
+            _pendingSnippets.Add(snippet);
+            
+            // Create and add badge UI
+            var badge = new SnippetBadge(snippet);
+            badge.RemoveRequested += OnSnippetRemoveRequested;
+            _snippetsContainer.AddChild(badge);
+            
+            // Show the container
+            _snippetsContainer.Visible = true;
+            
+            GD.Print($"G0: Added snippet from {snippet.GetDisplaySummary()}");
+        }
+
+        /// <summary>
+        /// Handles the request to remove a snippet badge.
+        /// </summary>
+        private void OnSnippetRemoveRequested(SnippetBadge badge)
+        {
+            if (badge?.Snippet != null)
+            {
+                _pendingSnippets.Remove(badge.Snippet);
+            }
+            
+            // Remove the badge from UI
+            badge.RemoveRequested -= OnSnippetRemoveRequested;
+            badge.QueueFree();
+            
+            // Hide container if no more snippets
+            if (_pendingSnippets.Count == 0)
+            {
+                _snippetsContainer.Visible = false;
+            }
+        }
+
+        /// <summary>
+        /// Clears all pending snippets and their badges.
+        /// </summary>
+        private void ClearPendingSnippets()
+        {
+            _pendingSnippets.Clear();
+            
+            // Remove all badge children
+            foreach (var child in _snippetsContainer.GetChildren())
+            {
+                if (child is SnippetBadge badge)
+                {
+                    badge.RemoveRequested -= OnSnippetRemoveRequested;
+                }
+                child.QueueFree();
+            }
+            
+            _snippetsContainer.Visible = false;
+        }
+
+        /// <summary>
+        /// Gets the number of pending snippets.
+        /// </summary>
+        public int PendingSnippetCount => _pendingSnippets.Count;
     }
 }
 #endif

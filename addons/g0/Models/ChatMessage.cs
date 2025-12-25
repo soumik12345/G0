@@ -16,6 +16,11 @@ namespace G0.Models
         /// </summary>
         public List<FileReference> AttachedFiles { get; set; } = new List<FileReference>();
 
+        /// <summary>
+        /// List of code snippets attached to this message.
+        /// </summary>
+        public List<CodeSnippet> AttachedSnippets { get; set; } = new List<CodeSnippet>();
+
         public ChatMessage() { }
 
         public ChatMessage(string role, string content)
@@ -33,10 +38,29 @@ namespace G0.Models
             AttachedFiles = attachedFiles ?? new List<FileReference>();
         }
 
+        public ChatMessage(string role, string content, List<FileReference> attachedFiles, List<CodeSnippet> attachedSnippets)
+        {
+            Role = role;
+            Content = content;
+            Timestamp = DateTime.Now;
+            AttachedFiles = attachedFiles ?? new List<FileReference>();
+            AttachedSnippets = attachedSnippets ?? new List<CodeSnippet>();
+        }
+
         /// <summary>
         /// Gets whether this message has any attached files.
         /// </summary>
         public bool HasAttachedFiles => AttachedFiles != null && AttachedFiles.Count > 0;
+
+        /// <summary>
+        /// Gets whether this message has any attached code snippets.
+        /// </summary>
+        public bool HasAttachedSnippets => AttachedSnippets != null && AttachedSnippets.Count > 0;
+
+        /// <summary>
+        /// Gets whether this message has any attachments (files or snippets).
+        /// </summary>
+        public bool HasAttachments => HasAttachedFiles || HasAttachedSnippets;
 
         /// <summary>
         /// Gets the count of successfully read attached files.
@@ -80,6 +104,17 @@ namespace G0.Models
                 dict["attached_files"] = filesArray;
             }
 
+            // Serialize attached snippets
+            if (AttachedSnippets != null && AttachedSnippets.Count > 0)
+            {
+                var snippetsArray = new Godot.Collections.Array();
+                foreach (var snippet in AttachedSnippets)
+                {
+                    snippetsArray.Add(snippet.ToDictionary());
+                }
+                dict["attached_snippets"] = snippetsArray;
+            }
+
             return dict;
         }
 
@@ -105,6 +140,17 @@ namespace G0.Models
                 }
             }
 
+            // Deserialize attached snippets
+            if (dict.ContainsKey("attached_snippets"))
+            {
+                var snippetsArray = dict["attached_snippets"].AsGodotArray();
+                foreach (var snippetDict in snippetsArray)
+                {
+                    var snippet = CodeSnippet.FromDictionary(snippetDict.AsGodotDictionary());
+                    message.AttachedSnippets.Add(snippet);
+                }
+            }
+
             return message;
         }
 
@@ -121,11 +167,11 @@ namespace G0.Models
         }
 
         /// <summary>
-        /// Gets the message content with attached file contents included as context.
+        /// Gets the message content with attached file contents and snippets included as context.
         /// </summary>
         public string GetContentWithFileContext()
         {
-            if (!HasAttachedFiles)
+            if (!HasAttachments)
             {
                 return Content;
             }
@@ -134,40 +180,76 @@ namespace G0.Models
             sb.AppendLine(Content);
             sb.AppendLine();
             sb.AppendLine("---");
-            sb.AppendLine("**Referenced Files:**");
-            sb.AppendLine();
 
-            foreach (var file in AttachedFiles)
+            // Add file references
+            if (HasAttachedFiles)
             {
-                sb.Append(file.ToFormattedContext());
+                sb.AppendLine("**Referenced Files:**");
                 sb.AppendLine();
+
+                foreach (var file in AttachedFiles)
+                {
+                    sb.Append(file.ToFormattedContext());
+                    sb.AppendLine();
+                }
+            }
+
+            // Add code snippets
+            if (HasAttachedSnippets)
+            {
+                sb.AppendLine("**Code Snippets:**");
+                sb.AppendLine();
+
+                foreach (var snippet in AttachedSnippets)
+                {
+                    sb.Append(snippet.ToFormattedContext());
+                    sb.AppendLine();
+                }
             }
 
             return sb.ToString();
         }
 
         /// <summary>
-        /// Gets a display-friendly summary of attached files.
+        /// Gets a display-friendly summary of attached files and snippets.
         /// </summary>
         public string GetAttachmentsSummary()
         {
-            if (!HasAttachedFiles)
+            var parts = new List<string>();
+
+            if (HasAttachedFiles)
+            {
+                var successCount = SuccessfulAttachmentCount;
+                var totalCount = AttachedFiles.Count;
+
+                if (successCount == totalCount)
+                {
+                    parts.Add($"📎 {totalCount} file{(totalCount == 1 ? "" : "s")}");
+                }
+                else
+                {
+                    parts.Add($"📎 {successCount}/{totalCount} files");
+                }
+            }
+
+            if (HasAttachedSnippets)
+            {
+                var snippetCount = AttachedSnippets.Count;
+                parts.Add($"✂️ {snippetCount} snippet{(snippetCount == 1 ? "" : "s")}");
+            }
+
+            if (parts.Count == 0)
             {
                 return "";
             }
 
-            var successCount = SuccessfulAttachmentCount;
-            var totalCount = AttachedFiles.Count;
-
-            if (successCount == totalCount)
-            {
-                return $"📎 {totalCount} file{(totalCount == 1 ? "" : "s")} attached";
-            }
-            else
-            {
-                return $"📎 {successCount}/{totalCount} files attached";
-            }
+            return string.Join(" • ", parts) + " attached";
         }
+
+        /// <summary>
+        /// Gets the count of attached snippets.
+        /// </summary>
+        public int SnippetCount => AttachedSnippets?.Count ?? 0;
     }
 }
 #endif

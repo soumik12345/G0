@@ -50,11 +50,15 @@ To enable web search capabilities, obtain a [Serper API key](https://serper.dev/
 
 4. **File operations**: Use `@filename` syntax to reference specific files in your project for analysis
 
+5. **Code snippets**: Select code in Godot's script editor and attach it as context to provide the AI with specific code sections to analyze or debug
+
 ### Example Queries
 
 - "How do I create a 2D platformer character controller?"
 - "Explain the difference between RigidBody2D and CharacterBody2D"
 - "Help me debug this script: @player.gd"
+- "Review this code snippet and suggest improvements" (with code snippet attached)
+- "Why is this function not working as expected?" (with specific function code selected)
 - "Show me best practices for scene management in Godot"
 
 ## Architecture
@@ -64,7 +68,13 @@ The G0 agent is built with a modular, layered architecture that integrates multi
 ```mermaid
 graph TB
     User([User]) -->|Query| ChatPanel[Chat Panel UI]
-    ChatPanel -->|Message| AgentClient[Agent Client]
+    User -->|Select Code| ScriptEditor[Godot Script Editor]
+
+    ScriptEditor -->|Code Selection| CodeSnippet[Code Snippet]
+    CodeSnippet -->|Attach Context| ChatPanel
+
+    ChatPanel -->|Message + Snippets| AgentClient[Agent Client]
+    ChatPanel -->|Display Badges| SnippetBadge[Snippet Badges]
 
     AgentClient -->|Processes with| AIProvider{AI Provider}
     AIProvider -->|Gemini| Gemini[Google Gemini API]
@@ -82,11 +92,13 @@ graph TB
     classDef core fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
     classDef external fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
     classDef tools fill:#f39c12,stroke:#d68910,stroke-width:2px,color:#fff
+    classDef snippets fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
 
-    class ChatPanel ui
+    class ChatPanel,SnippetBadge ui
     class AgentClient core
     class Gemini,OpenAI,SerperAPI external
     class Tools,GodotDocs,FileSystem tools
+    class ScriptEditor,CodeSnippet snippets
 ```
 
 ### Agent Architecture
@@ -149,7 +161,8 @@ This provides full transparency into the agent's decision-making process.
 4. **Context-Aware**: Maintains full conversation history and accumulates tool results for informed decision-making
 5. **Godot-Specialized**: Pre-trained on Godot documentation with semantic search across classes, tutorials, and best practices
 6. **Web-Connected**: Can search the internet for current information, external libraries, and community resources
-7. **Error Resilient**: Handles tool failures gracefully, continuing the agentic loop or providing informative errors
+7. **Code Snippet Integration**: Select code directly from Godot's script editor and attach it as context with automatic language detection and syntax highlighting
+8. **Error Resilient**: Handles tool failures gracefully, continuing the agentic loop or providing informative errors
 
 ## Documentation
 
