@@ -2,93 +2,91 @@
 
 <img width="1728" height="1080" alt="image" src="https://github.com/user-attachments/assets/7b72e391-f272-4b8e-8589-c3499eacd8a9" />
 
+## Installation
+
+### Prerequisites
+
+- **Godot Engine 4.5+** with C# support enabled
+- **.NET 8.0** or later
+- **Git** (for cloning the repository)
+
+### Installing the Plugin
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/soumik12345/G0.git
+   cd G0
+   ```
+
+2. **Open in Godot**
+   - Launch Godot Engine
+   - Click "Import" and select the `project.godot` file
+   - Wait for Godot to import the project and build the C# assemblies
+
+3. **Enable the plugin**
+   - Go to `Project → Project Settings → Plugins`
+   - Find "G0" in the plugin list
+   - Enable the plugin by checking the box next to it
+
+4. **Configure API keys**
+   - The G0 chat panel will appear in the right dock
+   - Click the settings button to configure your AI provider
+   - Add your API key for one of the supported providers:
+     - **Gemini API** (recommended): Get a key from [Google AI Studio](https://aistudio.google.com/)
+     - **OpenAI API**: Get a key from [OpenAI Platform](https://platform.openai.com/)
+     - **Azure OpenAI**: Configure your Azure endpoint and key
+
+### Optional: Web Search Setup
+
+To enable web search capabilities, obtain a [Serper API key](https://serper.dev/) and add it to the settings.
+
+## Usage
+
+1. **Access the chat interface**: Look for the "G0 Chat" panel in the right dock of the Godot Editor
+
+2. **Start chatting**: Type your questions about Godot development, game design, or coding problems
+
+3. **Watch the agent work**: G0 will autonomously search documentation, execute tools, and provide detailed responses
+
+4. **File operations**: Use `@filename` syntax to reference specific files in your project for analysis
+
+### Example Queries
+
+- "How do I create a 2D platformer character controller?"
+- "Explain the difference between RigidBody2D and CharacterBody2D"
+- "Help me debug this script: @player.gd"
+- "Show me best practices for scene management in Godot"
+
 ## Architecture
 
 The G0 agent is built with a modular, layered architecture that integrates multiple AI providers, tools, and the Godot documentation system.
 
 ```mermaid
 graph TB
-    subgraph "Agent Core"
-        AgentClient[AgentClient<br/>Agentic Loop Controller]
-        ChatHistory[Chat History<br/>Conversation Context]
-        AgentStep[Agent Steps<br/>Reasoning Tracker]
-    end
-    
-    subgraph "AI Provider Layer"
-        IChatClient[IChatClient Interface<br/>Microsoft.Extensions.AI]
-        GeminiAdapter[GeminiChatClientAdapter]
-        OpenAIClient[OpenAI Client]
-        AzureClient[Azure OpenAI Client]
-    end
-    
-    subgraph "Tools & Functions"
-        ToolRegistry[AI Function Registry]
-        GodotDocsTool[search_godot_docs<br/>get_godot_class_info<br/>list_godot_doc_topics]
-        SerperTool[search_web]
-        DocsIndex[(Documentation Index<br/>Searchable Knowledge Base)]
-    end
-    
-    subgraph "External APIs"
-        Gemini[Google Gemini API<br/>gemini-2.5-flash]
-        OpenAI[OpenAI API<br/>gpt-4o]
-        Serper[Serper API<br/>Web Search]
-    end
-    
-    %% User Input Flow
-    User([User Query]) -->|Message| AgentClient
-    
-    %% Agent Loop
-    AgentClient -->|1. Build Context| ChatHistory
-    AgentClient -->|2. Send with Tools| IChatClient
-    IChatClient -->|Delegates to| GeminiAdapter
-    IChatClient -->|Delegates to| OpenAIClient
-    IChatClient -->|Delegates to| AzureClient
-    
-    %% Provider to External API
-    GeminiAdapter -->|API Request| Gemini
-    OpenAIClient -->|API Request| OpenAI
-    
-    %% Response with Tool Calls
-    Gemini -->|Streaming Response<br/>+ Tool Calls| AgentClient
-    OpenAI -->|Streaming Response<br/>+ Tool Calls| AgentClient
-    
-    %% Tool Execution Loop
-    AgentClient -->|3. Detect Tool Call| ToolRegistry
-    ToolRegistry -->|Execute| GodotDocsTool
-    ToolRegistry -->|Execute| SerperTool
-    
-    %% Tool Implementation
-    GodotDocsTool -->|Search Query| DocsIndex
-    DocsIndex -->|Results| GodotDocsTool
-    SerperTool -->|HTTP Request| Serper
-    Serper -->|Search Results| SerperTool
-    
-    %% Tool Results Back to Agent
-    GodotDocsTool -->|Tool Result| AgentClient
-    SerperTool -->|Tool Result| AgentClient
-    
-    %% Iteration or Final Response
-    AgentClient -->|4. Add Result to Context| ChatHistory
-    AgentClient -->|5a. Continue Loop<br/>Max 5 Iterations| IChatClient
-    AgentClient -->|5b. Final Response| User
-    
-    %% Step Tracking
-    AgentClient -.->|Track Each Step| AgentStep
-    AgentStep -.->|Iteration Start<br/>Reasoning<br/>Tool Call<br/>Tool Result| User
-    
-    %% Styling
-    classDef agent fill:#9b59b6,stroke:#6c3483,stroke-width:3px,color:#fff
-    classDef provider fill:#3498db,stroke:#1f618d,stroke-width:2px,color:#fff
-    classDef tools fill:#e67e22,stroke:#a05a1a,stroke-width:2px,color:#fff
-    classDef external fill:#e74c3c,stroke:#922b21,stroke-width:2px,color:#fff
-    classDef data fill:#95a5a6,stroke:#5d6d7e,stroke-width:2px,color:#fff
-    classDef user fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
-    
-    class AgentClient,ChatHistory,AgentStep agent
-    class IChatClient,GeminiAdapter,OpenAIClient,AzureClient provider
-    class ToolRegistry,GodotDocsTool,SerperTool,DocsIndex tools
-    class Gemini,OpenAI,Serper external
-    class User user
+    User([User]) -->|Query| ChatPanel[Chat Panel UI]
+    ChatPanel -->|Message| AgentClient[Agent Client]
+
+    AgentClient -->|Processes with| AIProvider{AI Provider}
+    AIProvider -->|Gemini| Gemini[Google Gemini API]
+    AIProvider -->|OpenAI| OpenAI[OpenAI API]
+
+    AgentClient -->|Uses Tools| Tools[AI Tools]
+    Tools -->|Documentation Search| GodotDocs[Godot Docs Index]
+    Tools -->|Web Search| SerperAPI[Serper API]
+    Tools -->|File Operations| FileSystem[Project Files]
+
+    AgentClient -->|Streams Response| ChatPanel
+    ChatPanel -->|Display| User
+
+    classDef ui fill:#3498db,stroke:#2980b9,stroke-width:2px,color:#fff
+    classDef core fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    classDef external fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
+    classDef tools fill:#f39c12,stroke:#d68910,stroke-width:2px,color:#fff
+
+    class ChatPanel ui
+    class AgentClient core
+    class Gemini,OpenAI,SerperAPI external
+    class Tools,GodotDocs,FileSystem tools
 ```
 
 ### Agent Architecture
