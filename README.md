@@ -21,7 +21,8 @@ https://github.com/user-attachments/assets/216f287c-7e8e-47f2-9f3b-ef2cbcb650cc
 2. **Open in Godot**
    - Launch Godot Engine
    - Click "Import" and select the `project.godot` file
-   - Wait for Godot to import the project and build the C# assemblies
+   - Wait for Godot to import the project
+   - Build the solution manually to generate the C# assemblies (You can use external build utils or the "build" button within Godot)
 
 3. **Enable the plugin**
    - Go to `Project → Project Settings → Plugins`
